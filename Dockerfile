@@ -1,33 +1,8 @@
-FROM ubuntu:18.04
+FROM ubuntu:20.04
 
 # Build tools
 RUN set -ex; \
-    apt-get update && apt-get install -y \
-        build-essential \
-        git \
-        libncurses-dev \
-        flex \
-        bison \
-        openssl \
-        libssl-dev \
-        dkms \
-        libelf-dev \
-        libudev-dev \ 
-        libpci-dev \
-        libiberty-dev \
-        autoconf \
-        liblz4-tool \
-        bc \
-        curl \
-        gcc \
-        git \
-        libssl-dev \
-        libncurses5-dev \
-        lzop \
-        make \
-        u-boot-tools \
-        wget \
-        xz-utils;
+    apt-get update && apt-get install -y make wget xz-utils;
 
 # Create build folder
 RUN set -ex; \
@@ -42,8 +17,6 @@ RUN set -ex; \
     rm gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf.tar.xz; \
     mv gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf gcc;
 
-#ENV PATH="${PATH}:/build/gcc/bin"
-ENV ARCH=arm
-ENV CROSS_COMPILE=/build/gcc/bin/arm-linux-gnueabihf-
+ENV PATH="${PATH}:/build/gcc/bin"
 
 WORKDIR /project

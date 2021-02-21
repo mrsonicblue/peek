@@ -1,0 +1,46 @@
+#!/bin/sh
+
+mkdir -p /var/log/peek
+
+start() {
+        printf "Starting peek services: "
+        /media/fat/peek/peek >> /var/log/peek/peek.log 2>&1 &
+        [ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+stop() {
+        printf "Shutting down peek services: "
+        kill -9 `pidof peek`
+        [ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+restart() {
+        stop
+        start
+}
+
+reload() {
+        printf "Reloading peek config: "
+        kill -HUP `pidof peek`
+        [ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+case "$1" in
+  start)
+        start
+        ;;
+  stop)
+        stop
+        ;;
+  restart)
+        restart
+        ;;
+  reload)
+        reload
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart|reload}"
+        exit 1
+esac
+
+exit $?
