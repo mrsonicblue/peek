@@ -1,10 +1,7 @@
-apt-get install nano
+use Dockerfile-kernel to create image
 
-git clone --depth=1 https://github.com/MiSTer-devel/Linux-Kernel_MiSTer.git
+git clone --depth=1 https://mrsonicblue@github.com/mrsonicblue/Linux-Kernel_MiSTer.git
 cd Linux-Kernel_MiSTer
-
-edit arch/arm/configs/MiSTer_defconfig
-enable CONFIG_USB_ACM
 
 make MiSTer_defconfig
 make -j6 zImage
