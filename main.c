@@ -9,7 +9,8 @@
 #include <fcntl.h> 
 #include <termios.h>
 
-#define PORTAL "/dev/ttyACM1"
+#define PORTAL "/dev/ttyACM2"
+#define BUFFER_SIZE 4096
 
 static volatile bool _terminated;
 
@@ -34,20 +35,10 @@ int set_interface_attribs(int fd, int speed)
     cfsetospeed(&tty, (speed_t)speed);
     cfsetispeed(&tty, (speed_t)speed);
 
-    tty.c_cflag |= (CLOCAL | CREAD);    /* ignore modem controls */
-    tty.c_cflag &= ~CSIZE;
-    tty.c_cflag |= CS8;         /* 8-bit characters */
-    tty.c_cflag &= ~PARENB;     /* no parity bit */
-    tty.c_cflag &= ~CSTOPB;     /* only need 1 stop bit */
-    tty.c_cflag &= ~CRTSCTS;    /* no hardware flowcontrol */
-
-    /* setup for non-canonical mode */
-    tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
-    tty.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-    tty.c_oflag &= ~OPOST;
+    cfmakeraw(&tty);
 
     /* fetch bytes as they become available */
-    tty.c_cc[VMIN] = 1;
+    tty.c_cc[VMIN] = 0;
     tty.c_cc[VTIME] = 1;
 
     if (tcsetattr(fd, TCSANOW, &tty) != 0)
@@ -58,21 +49,56 @@ int set_interface_attribs(int fd, int speed)
     return 0;
 }
 
-void set_mincount(int fd, int mcount)
+int msleep(long msec)
 {
-    struct termios tty;
+    struct timespec ts;
+    int res;
 
-    if (tcgetattr(fd, &tty) < 0)
+    if (msec < 0)
     {
-        printf("Error tcgetattr: %s\n", strerror(errno));
-        return;
+        errno = EINVAL;
+        return -1;
     }
 
-    tty.c_cc[VMIN] = mcount ? 1 : 0;
-    tty.c_cc[VTIME] = 5;        /* half second timer */
+    ts.tv_sec = msec / 1000;
+    ts.tv_nsec = (msec % 1000) * 1000000;
 
-    if (tcsetattr(fd, TCSANOW, &tty) < 0)
-        printf("Error tcsetattr: %s\n", strerror(errno));
+    do {
+        res = nanosleep(&ts, &ts);
+    } while (res && errno == EINTR);
+
+    return res;
+}
+
+void runcmd(char *cmd, int fd)
+{
+    char buf[BUFFER_SIZE];
+    FILE *pp;
+
+    if ((pp = popen(cmd, "r")) == NULL)
+    {
+        printf("Failed to open command\n");
+    }
+    else
+    {
+        while (fgets(buf, BUFFER_SIZE, pp) != NULL)
+        {
+            int xlen = strlen(buf);
+            printf("Sending %d: \"%s\"\n", xlen, buf);
+
+            int wlen = write(fd, buf, xlen);
+            if (wlen != xlen)
+            {
+                printf("Error from write: %d, %d\n", wlen, errno);
+            }
+            tcdrain(fd);    /* delay for output */
+        }
+
+        if (pclose(pp))
+        {
+            printf("Command not found or exited with error status\n");
+        }
+    }
 }
 
 void process()
@@ -81,11 +107,11 @@ void process()
 
     char *portname = PORTAL;
     int fd;
-    int wlen;
-    char *xstr = "Hello!\r\n";
-    int xlen = strlen(xstr);
+    int rdpos = 0;
+    char rdbuf[BUFFER_SIZE];
+    char rdcmd[BUFFER_SIZE];
 
-    fd = open(portname, O_RDWR | O_NOCTTY | O_SYNC);
+    fd = open(portname, O_RDWR | O_NOCTTY | O_SYNC | O_NONBLOCK);
     if (fd < 0) 
     {
         printf("Error opening %s: %s\n", portname, strerror(errno));
@@ -93,27 +119,37 @@ void process()
     }
     /*baudrate 115200, 8 bits, no parity, 1 stop bit */
     set_interface_attribs(fd, B115200);
-    set_mincount(fd, 0);                /* set to pure timed read */
-
-    /* simple output */
-    wlen = write(fd, xstr, xlen);
-    if (wlen != xlen)
-    {
-        printf("Error from write: %d, %d\n", wlen, errno);
-    }
-    tcdrain(fd);    /* delay for output */
 
     /* simple noncanonical input */
     while (!_terminated)
     {
-        unsigned char buf[80];
-        int rdlen;
-
-        rdlen = read(fd, buf, sizeof(buf) - 1);
+        int rdlen = read(fd, rdbuf + rdpos, BUFFER_SIZE - rdpos - 1);
         if (rdlen > 0)
         {
-            buf[rdlen] = 0;
-            printf("Read %d: \"%s\"\n", rdlen, buf);
+            for (int i = 0; i < rdlen; i++)
+            {
+                if (rdbuf[rdpos] == 0)
+                {
+                    strcpy(rdcmd, rdbuf);
+
+                    printf("Read %d: \"%s\"\n", rdpos, rdcmd);
+
+                    runcmd(rdcmd, fd);
+
+                    if (i + 1 < rdlen)
+                        memcpy(rdbuf, rdbuf + rdpos + 1, rdpos + (rdlen - i - 1));
+                    
+                    rdpos = 0;
+                }
+                else
+                {
+                    rdpos++;
+                }
+            }
+        }
+        else if (rdlen == -1)
+        {
+            // No data available
         }
         else if (rdlen < 0)
         {
@@ -124,7 +160,7 @@ void process()
             printf("Timeout from read\n");
         }
 
-        sleep(1);
+        msleep(100);
         /* repeat read to get full message */
     }
 
@@ -187,7 +223,8 @@ int main(int argc, char *argv[])
 	{
 		process();
 
-		sleep(1);
+        if (!_terminated)
+		    sleep(1);
 	}
 
 	printf("\n");
