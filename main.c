@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <signal.h>
 #include <string.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <errno.h>
@@ -11,6 +12,7 @@
 
 #define PORTAL "/dev/ttyACM2"
 #define BUFFER_SIZE 4096
+#define EOM 4
 
 static volatile bool _terminated;
 
@@ -37,7 +39,6 @@ int set_interface_attribs(int fd, int speed)
 
     cfmakeraw(&tty);
 
-    /* fetch bytes as they become available */
     tty.c_cc[VMIN] = 0;
     tty.c_cc[VTIME] = 1;
 
@@ -46,7 +47,16 @@ int set_interface_attribs(int fd, int speed)
         printf("Error from tcsetattr: %s\n", strerror(errno));
         return -1;
     }
+
     return 0;
+}
+
+char *rtrim(char *s)
+{
+    char* back = s + strlen(s);
+    while(isspace(*--back));
+    *(back+1) = '\0';
+    return s;
 }
 
 int msleep(long msec)
@@ -70,101 +80,170 @@ int msleep(long msec)
     return res;
 }
 
-void runcmd(char *cmd, int fd)
+void writeraw(char *s, int sendlen, int portal)
 {
-    char buf[BUFFER_SIZE];
-    FILE *pp;
-
-    if ((pp = popen(cmd, "r")) == NULL)
+    int writelen = write(portal, s, sendlen);
+    if (writelen != sendlen)
     {
-        printf("Failed to open command\n");
+        printf("Error from write: %d, %d\n", writelen, errno);
+    }
+    tcdrain(portal); // wait for write
+}
+
+void writestr(char *s, int portal)
+{
+    int sendlen = strlen(s) + 1;
+    writeraw(s, sendlen, portal);
+}
+
+void writeeol(int portal)
+{
+    char s[] = {0x00};
+    printf("Sending EOL\n");
+    writeraw(s, 1, portal);
+}
+
+void writeeom(int portal)
+{
+    char s[] = {EOM};    
+    printf("Sending EOM\n");
+    writeraw(s, 1, portal);
+}
+
+void runcmdproc(char *key, char *path, int portal)
+{
+    char procbuf[BUFFER_SIZE];
+    FILE *proc;
+
+    printf("Running process: %s\n", path);
+
+    if ((proc = popen(path, "r")) == NULL)
+    {
+        printf("Failed to open process\n");
     }
     else
     {
-        while (fgets(buf, BUFFER_SIZE, pp) != NULL)
-        {
-            int xlen = strlen(buf);
-            printf("Sending %d: \"%s\"\n", xlen, buf);
+        writestr(key, portal);
 
-            int wlen = write(fd, buf, xlen);
-            if (wlen != xlen)
-            {
-                printf("Error from write: %d, %d\n", wlen, errno);
-            }
-            tcdrain(fd);    /* delay for output */
+        while (fgets(procbuf, BUFFER_SIZE, proc) != NULL)
+        {
+            // rtrim(procbuf);
+            int len = strlen(procbuf);
+            writeraw(procbuf, len, portal);
         }
 
-        if (pclose(pp))
+        writeeol(portal);
+        writeeom(portal);
+
+        if (pclose(proc))
         {
-            printf("Command not found or exited with error status\n");
+            printf("Process exited with error status\n");
         }
+    }
+}
+
+void runcmd(char **cmds, int cmdcnt, int portal)
+{
+    if (cmdcnt < 2)
+    {
+        printf("All commands requires at least two arguments\n");
+        return;
+    }
+    
+    if (strcmp(cmds[1], "proc") == 0)
+    {
+        // Run process
+        if (cmdcnt < 3)
+        {
+            printf("Process command requires three arguments\n");
+            return;
+        }
+
+        runcmdproc(cmds[0], cmds[2], portal);
+    }
+    else
+    {
+        printf("Unknown command type: %s\n", cmds[1]);
     }
 }
 
 void process()
 {
-    printf("PING\n");
+    char *cmds[20];
+    int cmdspos = 0;
+    char readbuf[BUFFER_SIZE];
+    int readpos = 0;
 
-    char *portname = PORTAL;
-    int fd;
-    int rdpos = 0;
-    char rdbuf[BUFFER_SIZE];
-    char rdcmd[BUFFER_SIZE];
-
-    fd = open(portname, O_RDWR | O_NOCTTY | O_SYNC | O_NONBLOCK);
-    if (fd < 0) 
+    int portal = open(PORTAL, O_RDWR | O_NOCTTY | O_SYNC | O_NONBLOCK);
+    if (portal < 0) 
     {
-        printf("Error opening %s: %s\n", portname, strerror(errno));
-        //return -1;
+        printf("Error opening %s: %s\n", PORTAL, strerror(errno));
+        return;
     }
-    /*baudrate 115200, 8 bits, no parity, 1 stop bit */
-    set_interface_attribs(fd, B115200);
 
-    /* simple noncanonical input */
+    if (set_interface_attribs(portal, B115200) != 0)
+        return;
+
     while (!_terminated)
     {
-        int rdlen = read(fd, rdbuf + rdpos, BUFFER_SIZE - rdpos - 1);
-        if (rdlen > 0)
+        int readlen = read(portal, readbuf + readpos, BUFFER_SIZE - readpos - 1);
+        if (readlen > 0)
         {
-            for (int i = 0; i < rdlen; i++)
+            for (int i = 0; i < readlen; i++)
             {
-                if (rdbuf[rdpos] == 0)
+                if (readbuf[0] == EOM) // End of stack
                 {
-                    strcpy(rdcmd, rdbuf);
-
-                    printf("Read %d: \"%s\"\n", rdpos, rdcmd);
-
-                    runcmd(rdcmd, fd);
-
-                    if (i + 1 < rdlen)
-                        memcpy(rdbuf, rdbuf + rdpos + 1, rdpos + (rdlen - i - 1));
+                    printf("Running command\n");
                     
-                    rdpos = 0;
+                    runcmd(cmds, cmdspos, portal);
+
+                    for (int j = 0; j < cmdspos; j++)
+                        free(cmds[j]);
+                    
+                    cmdspos = 0;
+
+                    if (readlen > i + 1)
+                        memcpy(readbuf, readbuf + 1, readlen - 1);
+                }
+                else if (readbuf[readpos] == 0) // End of item
+                {
+                    char *cmd = malloc(readpos + 1);
+                    memcpy(cmd, readbuf, readpos + 1);
+                    cmds[cmdspos++] = cmd;
+
+                    printf("Read %d: \"%s\"\n", readpos, cmd);
+
+                    if (readlen > i + 1)
+                        memcpy(readbuf, readbuf + readpos + 1, readpos + (readlen - i - 1));
+                    
+                    readpos = 0;
                 }
                 else
                 {
-                    rdpos++;
+                    readpos++;
                 }
             }
         }
-        else if (rdlen == -1)
+        else if (readlen == -1)
         {
             // No data available
         }
-        else if (rdlen < 0)
+        else if (readlen < 0)
         {
-            printf("Error from read: %d: %s\n", rdlen, strerror(errno));
+            printf("Error from read: %d: %s\n", readlen, strerror(errno));
         }
-        else
-        {  /* rdlen == 0 */
+        else // readLen == 0
+        {  
             printf("Timeout from read\n");
         }
 
         msleep(100);
-        /* repeat read to get full message */
     }
 
-    close(fd);
+    for (int j = 0; j < cmdspos; j++)
+        free(cmds[j]);
+
+    close(portal);
 }
 
 void signalHandler(int signal)
