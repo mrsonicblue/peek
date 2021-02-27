@@ -7,16 +7,26 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <errno.h>
-#include <fcntl.h> 
+#include <fcntl.h>
+#include <dirent.h>
+#include <sys/inotify.h>
 #include <termios.h>
 
 #define PORTAL "/dev/ttyACM2"
 #define BUFFER_SIZE 4096
 #define EOM 4
+#define EVENT_SIZE ( sizeof (struct inotify_event) )
+#define EVENT_BUFFER_SIZE ( 4 * ( EVENT_SIZE + 16 ) )
 
 static volatile bool _terminated;
+int inote;
+int inotecore;
+int inoteroms;
+char inotebuf[EVENT_BUFFER_SIZE];
+char corecur[BUFFER_SIZE];
+char romcur[BUFFER_SIZE];
 
-void shutDown()
+void shutdown()
 {
 	if (_terminated)
 		return;
@@ -24,7 +34,7 @@ void shutDown()
 	_terminated = true;
 }
 
-int set_interface_attribs(int fd, int speed)
+int setinterface(int fd, int speed)
 {
     struct termios tty;
 
@@ -80,7 +90,7 @@ int msleep(long msec)
     return res;
 }
 
-void writeraw(char *s, int sendlen, int portal)
+void writeraw(int portal, char *s, int sendlen)
 {
     int writelen = write(portal, s, sendlen);
     if (writelen != sendlen)
@@ -90,27 +100,27 @@ void writeraw(char *s, int sendlen, int portal)
     tcdrain(portal); // wait for write
 }
 
-void writestr(char *s, int portal)
+void writestr(int portal, char *s)
 {
     int sendlen = strlen(s) + 1;
-    writeraw(s, sendlen, portal);
+    writeraw(portal, s, sendlen);
 }
 
 void writeeol(int portal)
 {
     char s[] = {0x00};
     printf("Sending EOL\n");
-    writeraw(s, 1, portal);
+    writeraw(portal, s, 1);
 }
 
 void writeeom(int portal)
 {
     char s[] = {EOM};    
     printf("Sending EOM\n");
-    writeraw(s, 1, portal);
+    writeraw(portal, s, 1);
 }
 
-void runcmdproc(char *key, char *path, int portal)
+void runcmdproc(int portal, char *key, char *path)
 {
     char procbuf[BUFFER_SIZE];
     FILE *proc;
@@ -123,13 +133,13 @@ void runcmdproc(char *key, char *path, int portal)
     }
     else
     {
-        writestr(key, portal);
+        writestr(portal, key);
 
         while (fgets(procbuf, BUFFER_SIZE, proc) != NULL)
         {
             // rtrim(procbuf);
             int len = strlen(procbuf);
-            writeraw(procbuf, len, portal);
+            writeraw(portal, procbuf, len);
         }
 
         writeeol(portal);
@@ -142,7 +152,7 @@ void runcmdproc(char *key, char *path, int portal)
     }
 }
 
-void runcmd(char **cmds, int cmdcnt, int portal)
+void runcmd(int portal, char **cmds, int cmdcnt)
 {
     if (cmdcnt < 2)
     {
@@ -159,11 +169,123 @@ void runcmd(char **cmds, int cmdcnt, int portal)
             return;
         }
 
-        runcmdproc(cmds[0], cmds[2], portal);
+        runcmdproc(portal, cmds[0], cmds[2]);
     }
     else
     {
         printf("Unknown command type: %s\n", cmds[1]);
+    }
+}
+
+void readrom(int portal, char *rom)
+{
+    if (strcmp(romcur, rom) == 0)
+        return;
+
+    strcpy(romcur, rom);
+
+    writestr(portal, "rom");
+    writestr(portal, romcur);
+    writeeom(portal);
+}
+
+void readcore(int portal)
+{
+    FILE *file;
+    char core[BUFFER_SIZE];
+
+    if ((file = fopen("/tmp/CORENAME", "r")) == NULL) 
+    {
+        printf("Failed to open /tmp/CORENAME\n");
+        return;
+    }
+
+    if (fgets(core, BUFFER_SIZE - 1, file) != NULL)
+    {
+        if (strcmp(core, corecur) != 0)
+        {
+            printf("Core: %s\n", core);
+
+            strcpy(corecur, core);
+
+            if (inoteroms > 0)
+            {
+                inotify_rm_watch(inote, inoteroms);
+                inoteroms = 0;
+            }
+
+            char gamespath[BUFFER_SIZE];
+            sprintf(gamespath, "/media/fat/games/%s", core);
+            printf("ROM path: %s\n", gamespath);
+
+            DIR *gamesdir;
+            if ((gamesdir = opendir(gamespath)) != NULL) 
+            {
+                closedir(gamesdir);
+
+                if ((inoteroms = inotify_add_watch(inote, gamespath, IN_OPEN)) < 0)
+                {
+                    printf("Failed to watch ROM path\n");
+                }
+            }
+            else
+            {
+                printf("ROM path does not exist\n");
+            }
+
+            writestr(portal, "core");
+            writestr(portal, corecur);
+            writeeom(portal);
+
+            readrom(portal, "");
+        }
+    }
+    else 
+    {
+        printf("Failed to read /tmp/CORENAME\n");
+    }
+
+    fclose(file);
+}
+
+void checkinote(int portal)
+{
+    int readlen = read(inote, inotebuf, EVENT_BUFFER_SIZE);
+
+    if (readlen > 0)
+    {
+        struct inotify_event *event;
+        for (int i = 0; i < readlen; i += EVENT_SIZE + event->len)
+        {
+            event = (struct inotify_event *) &inotebuf[i];
+
+            if (event->wd == inotecore)
+            {
+                printf("Core changed\n");
+                readcore(portal);
+            }
+            else if (inoteroms > 0 && event->wd == inoteroms) 
+            {
+                if (event->len > 0)
+                {
+                    printf("Game opened\n");
+                    printf("%s\n", event->name);
+                    readrom(portal, event->name);
+                }
+            }
+        }
+    }
+    else if (readlen == -1)
+    {
+        // No data available
+    }
+    else if (readlen < 0)
+    {
+        printf("Error from read: %d: %s\n", readlen, strerror(errno));
+    }
+    else // readlen == 0
+    {  
+        printf("Timeout from read\n");
     }
 }
 
@@ -181,8 +303,12 @@ void process()
         return;
     }
 
-    if (set_interface_attribs(portal, B115200) != 0)
+    if (setinterface(portal, B115200) != 0)
         return;
+
+    // Force read of core
+    corecur[0] = 0;
+    readcore(portal);
 
     while (!_terminated)
     {
@@ -195,7 +321,7 @@ void process()
                 {
                     printf("Running command\n");
                     
-                    runcmd(cmds, cmdspos, portal);
+                    runcmd(portal, cmds, cmdspos);
 
                     for (int j = 0; j < cmdspos; j++)
                         free(cmds[j]);
@@ -232,10 +358,12 @@ void process()
         {
             printf("Error from read: %d: %s\n", readlen, strerror(errno));
         }
-        else // readLen == 0
+        else // readlen == 0
         {  
             printf("Timeout from read\n");
         }
+
+        checkinote(portal);
 
         msleep(100);
     }
@@ -246,7 +374,7 @@ void process()
     close(portal);
 }
 
-void signalHandler(int signal)
+void signalhandler(int signal)
 {
 	switch (signal)
     {
@@ -254,7 +382,7 @@ void signalHandler(int signal)
 		case SIGABRT:
 		case SIGQUIT:
 		case SIGINT:
-			shutDown();
+			shutdown();
 			break;
 		case SIGHUP:
 			// TODO: What to do in this case?
@@ -267,26 +395,49 @@ void signalHandler(int signal)
 	}
 }
 
-void setupSignals()
+void setupsignals()
 {
-	signal(SIGTERM, signalHandler);
-	signal(SIGQUIT, signalHandler);
-	signal(SIGABRT, signalHandler);
-	signal(SIGINT,  signalHandler);
+	signal(SIGTERM, signalhandler);
+	signal(SIGQUIT, signalhandler);
+	signal(SIGABRT, signalhandler);
+	signal(SIGINT,  signalhandler);
 	signal(SIGCONT, SIG_IGN);
 	signal(SIGSTOP, SIG_IGN);
-	signal(SIGHUP,  signalHandler);	
+	signal(SIGHUP,  signalhandler);	
 }
 
 bool initialize()
 {
 	_terminated = false;
+    corecur[0] = 0;
+    romcur[0] = 0;
+
+    if ((inote = inotify_init()) < 0)
+    {
+        printf("Failed to initialize inotify");
+        return false;
+    }
+
+    int flags = fcntl(inote, F_GETFL, 0);
+    fcntl(inote, F_SETFL, flags | O_NONBLOCK);
+
+    if ((inotecore = inotify_add_watch(inote, "/tmp/CORENAME", IN_MODIFY)) < 0)
+    {
+        printf("Failed to watch /tmp/CORENAME");
+        return false;
+    }
+
+    inoteroms = 0;
 
 	return true;
 }
 
 void cleanup()
 {
+    inotify_rm_watch(inote, inotecore);
+    if (inoteroms > 0)
+        inotify_rm_watch(inote, inoteroms);
+    close(inote);
 }
 
 int main(int argc, char *argv[])
@@ -294,7 +445,7 @@ int main(int argc, char *argv[])
 	if (!initialize())
 		return 1;
 
-	setupSignals();
+	setupsignals();
 
 	printf("Entering main loop...\n");
 	
