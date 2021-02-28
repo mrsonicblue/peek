@@ -26,7 +26,7 @@ DEP	= $(C_SRC:.c=.c.d) $(CPP_SRC:.cpp=.cpp.d)
 
 DFLAGS	= $(INCLUDE) -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -DVDATE=\"`date +"%y%m%d"`\"
 CFLAGS	= $(DFLAGS) -Wall -Wextra -Wno-strict-aliasing -Wno-unused-parameter -c -O3
-LFLAGS	= -lc -lstdc++ -lrt -lm -lpthread -ldl
+LFLAGS	= -lc -lstdc++ -lrt -lm -lpthread -ldl -llmdb
 
 $(PRJ): $(OBJ)
 	$(Q)$(info $@)
