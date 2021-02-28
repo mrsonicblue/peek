@@ -19,4 +19,16 @@ RUN set -ex; \
 
 ENV PATH="${PATH}:/build/gcc/bin"
 
+# liblmdb
+RUN set -ex; \
+    wget --no-verbose https://github.com/LMDB/lmdb/archive/LMDB_0.9.28.tar.gz; \
+    tar xfz LMDB_0.9.28.tar.gz; \
+    rm LMDB_0.9.28.tar.gz; \
+    mv lmdb-LMDB_0.9.28 lmdb; \
+    cd lmdb/libraries/liblmdb; \
+    make CC=/build/gcc/bin/arm-linux-gnueabihf-gcc AR=/build/gcc/bin/arm-linux-gnueabihf-ar liblmdb.a; \
+    mkdir -p /build/gcc/arm-linux-gnueabihf/include/libusb-1.0; \
+    cp lmdb.h /build/gcc/arm-linux-gnueabihf/include/; \
+    cp liblmdb.a /build/gcc/lib/gcc/arm-linux-gnueabihf/6.5.0/;
+
 WORKDIR /project
