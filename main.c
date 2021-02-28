@@ -10,7 +10,11 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <sys/inotify.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <paths.h>
 #include <termios.h>
+#include <lmdb.h>
 
 #define PORTAL "/dev/ttyACM2"
 #define BUFFER_SIZE 4096
@@ -19,6 +23,10 @@
 #define EVENT_BUFFER_SIZE ( 4 * ( EVENT_SIZE + 16 ) )
 
 static volatile bool _terminated;
+char *_mbcpath;
+MDB_env *_dbenv;
+MDB_txn *_dbtxn;
+MDB_dbi _dbi;
 int inote;
 int inotecore;
 int inoteroms;
@@ -152,6 +160,54 @@ void runcmdproc(int portal, char *key, char *path)
     }
 }
 
+void runcmdbproc(int portal, char *key, char *path)
+{
+    printf("Forking process\n");
+
+    // To create a detached process, we need to orphan a
+    // grandchild process. Start with child process.
+    int pid1;
+    if ((pid1 = fork()) < 0)
+    {
+        printf("Failed to fork process 1\n");
+        return;
+    }
+
+    if (pid1 == 0)
+    {
+        // Then fork grandchild process
+        int pid2;
+        if ((pid2 = fork()) < 0)
+        {
+            printf("Failed to fork process 2\n");
+            _exit(127);
+        }
+
+        if (pid2 == 0)
+        {
+            // The grandchild executes the background process
+            printf("Running background process: %s\n", path);
+
+            execl(_PATH_BSHELL, "sh", "-c", path, (char *)NULL);
+
+            printf("Failed to execute background process\n");
+            _exit(127);
+        }
+        else
+        {
+            // The child exits, which detaches the grandchild
+            // from the parent
+            _exit(0);
+        }
+    }
+    else
+    {
+        // The parent waits until the child exits
+        int status;
+        waitpid(pid1, &status, 0);
+    }
+}
+
 void runcmd(int portal, char **cmds, int cmdcnt)
 {
     if (cmdcnt < 2)
@@ -170,6 +226,17 @@ void runcmd(int portal, char **cmds, int cmdcnt)
         }
 
         runcmdproc(portal, cmds[0], cmds[2]);
+    }
+    else if (strcmp(cmds[1], "bproc") == 0)
+    {
+        // Run background process
+        if (cmdcnt < 3)
+        {
+            printf("Background process command requires three arguments\n");
+            return;
+        }
+
+        runcmdbproc(portal, cmds[0], cmds[2]);
     }
     else
     {
@@ -408,9 +475,73 @@ void setupsignals()
 
 bool initialize()
 {
+    int rc;
+
 	_terminated = false;
     corecur[0] = 0;
     romcur[0] = 0;
+
+    char selfpath[BUFFER_SIZE];
+    readlink("/proc/self/exe", selfpath, BUFFER_SIZE);
+
+    char *lastslash;
+    if ((lastslash = strrchr(selfpath, '/')) == NULL)
+    {
+        printf("Failed to find program path");
+        return false;
+    }
+    *lastslash = 0;
+
+    printf("Program directory: %s\n", selfpath);
+
+    char dbpath[BUFFER_SIZE];
+    sprintf(dbpath, "%s/data", selfpath);
+
+    printf("Database path: %s\n", dbpath);
+
+    char mbcpath[BUFFER_SIZE];
+    sprintf(mbcpath, "%s/mbc", selfpath);
+    _mbcpath = malloc(strlen(mbcpath) + 1);
+    strcpy(_mbcpath, mbcpath);
+
+    printf("Batch application path: %s\n", _mbcpath);
+
+    struct stat st = {0};
+    if (stat(dbpath, &st) == -1)
+    {
+        if ((rc = mkdir(dbpath, 0700)))
+        {
+            printf("Failed to create database directory\n");
+            return false;
+        }
+    }
+
+    if ((rc = mdb_env_create(&_dbenv)))
+    {
+        printf("Failed to create database environment: %d\n", rc);
+        return false;
+    }
+    //Limit large enough to accommodate all our named dbs. This only starts to matter if the number gets large, otherwise it's just a bunch of extra entries in the main table.
+    mdb_env_set_maxdbs(_dbenv, 50);
+    //This is the maximum size of the db (but will not be used directly), so we make it large enough that we hopefully never run into the limit.
+    mdb_env_set_mapsize(_dbenv, (size_t)1048576 * (size_t)100000); // 1MB * 100000
+    if ((rc = mdb_env_open(_dbenv, dbpath, MDB_NOTLS, 0664)))
+    {
+        printf("Failed to open database environment: %d\n", rc);
+        return false;
+    }
+
+    if ((rc = mdb_txn_begin(_dbenv, NULL, 0, &_dbtxn))) 
+    {
+        printf("Failed to create transaction: %d\n", rc);
+        return false;
+    }
+
+    if ((rc = mdb_dbi_open(_dbtxn, "test", MDB_DUPSORT | MDB_CREATE, &_dbi)))
+    {
+        printf("Failed to open database: %d\n", rc);
+        return false;
+    }
 
     if ((inote = inotify_init()) < 0)
     {
@@ -434,16 +565,90 @@ bool initialize()
 
 void cleanup()
 {
+    int rc;
+
     inotify_rm_watch(inote, inotecore);
     if (inoteroms > 0)
         inotify_rm_watch(inote, inoteroms);
     close(inote);
+
+    if ((rc = mdb_txn_commit(_dbtxn)))
+    {
+        printf("Failed to commit transaction: %d\n", rc);
+    }
+    mdb_dbi_close(_dbenv, _dbi);
+    mdb_env_close(_dbenv);
 }
 
 int main(int argc, char *argv[])
 {
 	if (!initialize())
 		return 1;
+
+    int rc;
+    if (true)
+    {
+        //Initialize the key with the key we're looking for
+        char *testKey = "TESTING";
+        MDB_val key = {strlen(testKey) + 1, testKey};
+
+        char *testData = "THIRD";
+        MDB_val data = {strlen(testData) + 1, testData};
+
+        if ((rc = mdb_put(_dbtxn, _dbi, &key, &data, MDB_NODUPDATA)))
+        {
+            // MDB_KEYEXIST IS OK
+            printf("Failed to write data: %d\n", rc);
+        }
+    }
+
+    if (true)
+    {
+        //Initialize the key with the key we're looking for
+        char *testKey = "TESTING";
+        MDB_val key = {strlen(testKey) + 1, testKey};
+
+        char *testData = "ANOTHER";
+        MDB_val data = {strlen(testData) + 1, testData};
+
+        if ((rc = mdb_del(_dbtxn, _dbi, &key, &data)))
+        {
+            // MDB_NOTFOUND IS OK
+            printf("Failed to write data: %d\n", rc);
+        }
+    }
+
+    MDB_cursor *dbcur;
+    if ((rc = mdb_cursor_open(_dbtxn, _dbi, &dbcur)))
+    {
+        printf("Failed to open cursor: %d\n", rc);
+        return 1;
+    }
+
+    if (true)
+    {
+        //Initialize the key with the key we're looking for
+        char *testKey = "TESTING";
+        MDB_val key = {strlen(testKey) + 1, testKey};
+        MDB_val data;
+
+        //Position the cursor, key and data are available in key
+        if ((rc = mdb_cursor_get(dbcur, &key, &data, MDB_SET_RANGE)))
+        {
+            printf("No data found: %d\n", rc);
+        }
+        else
+        {
+            printf("Data found!\n");
+            do
+            {
+                printf("Data: %s\n", (char *)data.mv_data);
+            }
+            while (!(rc = mdb_cursor_get(dbcur, &key, &data, MDB_NEXT)));
+        }
+
+        mdb_cursor_close(dbcur);
+    }
 
 	setupsignals();
 
