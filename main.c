@@ -35,6 +35,9 @@ struct Database
 {
     struct MDB_env *env;
     MDB_dbi dbi;
+    MDB_txn *txn;
+    bool txnreadonly;
+    MDB_cursor *cur;
 };
 
 struct Notify
@@ -116,6 +119,149 @@ int msleep(long msec)
     return res;
 }
 
+bool dbtxnopen(bool readonly)
+{
+    if (_db.txn)
+    {
+        printf("Transaction already open\n");
+        return false;
+    }
+
+    int rc;
+    int flags = readonly ? MDB_RDONLY : 0;
+    if ((rc = mdb_txn_begin(_db.env, NULL, flags, &_db.txn))) 
+    {
+        printf("Failed to create transaction: %d\n", rc);
+        return false;
+    }
+
+    _db.txnreadonly = readonly;
+
+    return true;
+}
+
+bool dbtxncheck()
+{
+    if (!_db.txn)
+    {
+        printf("No open transaction\n");
+        return false;
+    }
+
+    return true;
+}
+
+bool dbtxnclose()
+{
+    if (!dbtxncheck())
+        return false;
+
+    int rc;
+    if (_db.txnreadonly)
+    {
+        mdb_txn_abort(_db.txn);
+    }
+    else
+    {
+        if ((rc = mdb_txn_commit(_db.txn)))
+        {
+            printf("Failed to commit transaction: %d\n", rc);
+            return false;
+        }
+    }
+
+    _db.txn = NULL;
+
+    return true;
+}
+
+bool dbcuropen()
+{
+    if (_db.cur)
+    {
+        printf("Cursor already open\n");
+        return false;
+    }
+
+    int rc;
+    if ((rc = mdb_cursor_open(_db.txn, _db.dbi, &_db.cur)))
+    {
+        printf("Failed to open cursor: %d\n", rc);
+        return false;
+    }
+
+    return true;
+}
+
+bool dbcurcheck()
+{
+    if (!_db.cur)
+    {
+        printf("No open cursor\n");
+        return false;
+    }
+
+    return true;
+}
+
+bool dbcurclose()
+{
+    if (!dbcurcheck())
+        return false;
+
+    mdb_cursor_close(_db.cur);
+    _db.cur = NULL;
+
+    return true;
+}
+
+bool dbput(char *key, char *data)
+{
+    if (!dbtxncheck())
+        return false;
+    
+    MDB_val dbkey = {strlen(key) + 1, key};
+    MDB_val dbdata = {strlen(data) + 1, data};
+
+    int rc;
+    if ((rc = mdb_put(_db.txn, _db.dbi, &dbkey, &dbdata, MDB_NODUPDATA)))
+    {
+        if (rc != MDB_KEYEXIST)
+        {
+            printf("Failed to write data: %d\n", rc);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool dbdel(char *key, char *data)
+{
+    if (!dbtxncheck())
+        return false;
+
+    MDB_val dbkey = {strlen(key) + 1, key};
+    MDB_val dbdata;
+    if (data)
+    {
+        dbdata.mv_size = strlen(data) + 1;
+        dbdata.mv_data = data;
+    }
+
+    int rc;
+    if ((rc = mdb_del(_db.txn, _db.dbi, &dbkey, data ? &dbdata : NULL)))
+    {
+        if (rc != MDB_NOTFOUND)
+        {
+            printf("Failed to delete data: %d\n", rc);
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void writeraw(struct Portal *portal, char *s, int sendlen)
 {
     int writelen = write(portal->fd, s, sendlen);
@@ -146,7 +292,7 @@ void writeeom(struct Portal *portal)
     writeraw(portal, s, 1);
 }
 
-void runcmdproc(struct Portal *portal, char *key, char *path)
+void runcmd_proc(struct Portal *portal, char *cmdkey, char *path)
 {
     char procbuf[BUFFER_SIZE];
     FILE *proc;
@@ -159,7 +305,7 @@ void runcmdproc(struct Portal *portal, char *key, char *path)
     }
     else
     {
-        writestr(portal, key);
+        writestr(portal, cmdkey);
 
         while (fgets(procbuf, BUFFER_SIZE, proc) != NULL)
         {
@@ -178,7 +324,7 @@ void runcmdproc(struct Portal *portal, char *key, char *path)
     }
 }
 
-void runcmdbproc(char *key, char *path)
+void runcmd_bproc(char *path)
 {
     printf("Forking process\n");
 
@@ -226,39 +372,136 @@ void runcmdbproc(char *key, char *path)
     }
 }
 
+void runcmd_dbget(struct Portal *portal, char *cmdkey, char *key, char *value)
+{
+    if (dbtxnopen(true))
+    {
+        int rc;
+
+        if (dbcuropen())
+        {
+            char *key = "TESTING";
+            MDB_val dbkey = {strlen(key) + 1, key};
+            MDB_val dbdata;
+
+            writestr(portal, cmdkey);
+
+            if ((rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE)))
+            {
+                printf("No data found: %d\n", rc);
+            }
+            else
+            {
+                printf("Data found!\n");
+
+                do
+                {
+                    printf("Data: %s\n", (char *)dbdata.mv_data);
+                    writestr(portal, (char *)dbdata.mv_data);
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
+            }
+
+            writeeom(portal);
+
+            dbcurclose();
+        }
+
+        dbtxnclose();
+    }
+}
+
+void runcmd_dbput(struct Portal *portal, char *cmdkey, char *key, char *value)
+{
+    if (dbtxnopen(false))
+    {
+        dbput(key, value);
+
+        dbtxnclose();
+    }
+}
+
+void runcmd_dbdel(struct Portal *portal, char *cmdkey, char *key, char *value)
+{
+    if (dbtxnopen(false))
+    {
+        dbdel(key, value);
+
+        dbtxnclose();
+    }    
+}
+
 void runcmd(struct Portal *portal)
 {
-    if (portal->cmdstackpos < 2)
+    char **stack = portal->cmdstack;
+    int count = portal->cmdstackpos;
+
+    if (count < 2)
     {
         printf("All commands requires at least two arguments\n");
         return;
     }
     
-    if (strcmp(portal->cmdstack[1], "proc") == 0)
+    if (strcmp(stack[1], "proc") == 0)
     {
         // Run process
-        if (portal->cmdstackpos < 3)
+        if (count < 3)
         {
-            printf("Process command requires three arguments\n");
+            printf("'proc' command requires three arguments\n");
             return;
         }
 
-        runcmdproc(portal, portal->cmdstack[0], portal->cmdstack[2]);
+        runcmd_proc(portal, stack[0], stack[2]);
     }
-    else if (strcmp(portal->cmdstack[1], "bproc") == 0)
+    else if (strcmp(stack[1], "bproc") == 0)
     {
         // Run background process
-        if (portal->cmdstackpos < 3)
+        if (count < 3)
         {
-            printf("Background process command requires three arguments\n");
+            printf("'bproc' command requires three arguments\n");
             return;
         }
 
-        runcmdbproc(portal->cmdstack[0], portal->cmdstack[2]);
+        runcmd_bproc(stack[2]);
+    }
+    else if (strcmp(stack[1], "dbget") == 0)
+    {
+        // Save database record
+        if (count < 3)
+        {
+            printf("'dbget' command requires three or four arguments\n");
+            return;
+        }
+
+        char *value = (count == 3) ? NULL : stack[3];
+        runcmd_dbget(portal, stack[0], stack[2], value);
+    }
+    else if (strcmp(stack[1], "dbput") == 0)
+    {
+        // Save database record
+        if (count < 4)
+        {
+            printf("'dbput' command requires four arguments\n");
+            return;
+        }
+
+        runcmd_dbput(portal, stack[0], stack[2], stack[3]);
+    }
+    else if (strcmp(stack[1], "dbdel") == 0)
+    {
+        // Delete database record
+        if (count < 3)
+        {
+            printf("'dbdel' command requires three or four arguments\n");
+            return;
+        }
+
+        char *value = (count == 3) ? NULL : stack[3];
+        runcmd_dbdel(portal, stack[0], stack[2], value);
     }
     else
     {
-        printf("Unknown command type: %s\n", portal->cmdstack[1]);
+        printf("Unknown command type: %s\n", stack[1]);
     }
 }
 
@@ -639,23 +882,15 @@ bool initialize()
         return false;
     }
 
-    MDB_txn *dbtxn;
-    if ((rc = mdb_txn_begin(_db.env, NULL, 0, &dbtxn))) 
+    if (dbtxnopen(false))
     {
-        printf("Failed to create transaction: %d\n", rc);
-        return false;
-    }
+        if ((rc = mdb_dbi_open(_db.txn, NULL, MDB_DUPSORT | MDB_CREATE, &_db.dbi)))
+        {
+            printf("Failed to open database: %d\n", rc);
+            return false;
+        }
 
-    if ((rc = mdb_dbi_open(dbtxn, NULL, MDB_DUPSORT | MDB_CREATE, &_db.dbi)))
-    {
-        printf("Failed to open database: %d\n", rc);
-        return false;
-    }
-
-    if ((rc = mdb_txn_commit(dbtxn)))
-    {
-        printf("Failed to commit transaction: %d\n", rc);
-        return false;
+        dbtxnclose();
     }
 
 	return true;
@@ -674,70 +909,48 @@ int main(int argc, char *argv[])
 	if (!initialize())
 		return 1;
 
-    // int rc;
-    // if (true)
-    // {
-    //     //Initialize the key with the key we're looking for
-    //     char *testKey = "TESTING";
-    //     MDB_val key = {strlen(testKey) + 1, testKey};
+    if (dbtxnopen(false))
+    {
+        dbput("TESTING", "ONE");
+        dbput("TESTING", "TWO");
+        dbput("TESTING", "THREE");
+        dbput("TESTING", "FOUR");
+        dbput("TESTING", "FIVE");
+        dbput("TESTING", "SIX");
+        dbdel("TESTING", "THREE");
 
-    //     char *testData = "THIRD";
-    //     MDB_val data = {strlen(testData) + 1, testData};
+        dbtxnclose();
+    }
 
-    //     if ((rc = mdb_put(_dbtxn, _dbi, &key, &data, MDB_NODUPDATA)))
-    //     {
-    //         // MDB_KEYEXIST IS OK
-    //         printf("Failed to write data: %d\n", rc);
-    //     }
-    // }
+    if (dbtxnopen(true))
+    {
+        int rc;
 
-    // if (true)
-    // {
-    //     //Initialize the key with the key we're looking for
-    //     char *testKey = "TESTING";
-    //     MDB_val key = {strlen(testKey) + 1, testKey};
+        if (dbcuropen())
+        {
+            char *key = "TESTING";
+            MDB_val dbkey = {strlen(key) + 1, key};
+            MDB_val dbdata;
 
-    //     char *testData = "ANOTHER";
-    //     MDB_val data = {strlen(testData) + 1, testData};
+            if ((rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE)))
+            {
+                printf("No data found: %d\n", rc);
+            }
+            else
+            {
+                printf("Data found!\n");
+                do
+                {
+                    printf("Data: %s\n", (char *)dbdata.mv_data);
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
+            }
 
-    //     if ((rc = mdb_del(_dbtxn, _dbi, &key, &data)))
-    //     {
-    //         // MDB_NOTFOUND IS OK
-    //         printf("Failed to write data: %d\n", rc);
-    //     }
-    // }
+            dbcurclose();
+        }
 
-    // MDB_cursor *dbcur;
-    // if ((rc = mdb_cursor_open(_dbtxn, _dbi, &dbcur)))
-    // {
-    //     printf("Failed to open cursor: %d\n", rc);
-    //     return 1;
-    // }
-
-    // if (true)
-    // {
-    //     //Initialize the key with the key we're looking for
-    //     char *testKey = "TESTING";
-    //     MDB_val key = {strlen(testKey) + 1, testKey};
-    //     MDB_val data;
-
-    //     //Position the cursor, key and data are available in key
-    //     if ((rc = mdb_cursor_get(dbcur, &key, &data, MDB_SET_RANGE)))
-    //     {
-    //         printf("No data found: %d\n", rc);
-    //     }
-    //     else
-    //     {
-    //         printf("Data found!\n");
-    //         do
-    //         {
-    //             printf("Data: %s\n", (char *)data.mv_data);
-    //         }
-    //         while (!(rc = mdb_cursor_get(dbcur, &key, &data, MDB_NEXT)));
-    //     }
-
-    //     mdb_cursor_close(dbcur);
-    // }
+        dbtxnclose();
+    }
 
 	setupsignals();
 
