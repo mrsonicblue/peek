@@ -16,23 +16,41 @@
 #include <termios.h>
 #include <lmdb.h>
 
-#define PORTAL "/dev/ttyACM2"
+#define GAMES_PATH "/media/fat/games"
 #define BUFFER_SIZE 4096
 #define EOM 4
 #define EVENT_SIZE ( sizeof (struct inotify_event) )
 #define EVENT_BUFFER_SIZE ( 4 * ( EVENT_SIZE + 16 ) )
 
+struct Portal
+{
+    int fd;
+    char *cmdstack[20];
+    int cmdstackpos;
+    char *readbuf;
+    int readpos;
+};
+
+struct Database
+{
+    struct MDB_env *env;
+    MDB_dbi dbi;
+};
+
+struct Notify
+{
+    int id;
+    int watchcore;
+    int watchroms;
+    char *readbuf;
+    struct Portal *portal;
+};
+
 static volatile bool _terminated;
 char *_mbcpath;
-MDB_env *_dbenv;
-MDB_txn *_dbtxn;
-MDB_dbi _dbi;
-int inote;
-int inotecore;
-int inoteroms;
-char inotebuf[EVENT_BUFFER_SIZE];
-char corecur[BUFFER_SIZE];
-char romcur[BUFFER_SIZE];
+char *_core;
+char *_rom;
+struct Database _db;
 
 void shutdown()
 {
@@ -42,14 +60,14 @@ void shutdown()
 	_terminated = true;
 }
 
-int setinterface(int fd, int speed)
+bool setinterface(struct Portal *portal, int speed)
 {
     struct termios tty;
 
-    if (tcgetattr(fd, &tty) < 0)
+    if (tcgetattr(portal->fd, &tty) < 0)
     {
         printf("Error from tcgetattr: %s\n", strerror(errno));
-        return -1;
+        return false;
     }
 
     cfsetospeed(&tty, (speed_t)speed);
@@ -60,13 +78,13 @@ int setinterface(int fd, int speed)
     tty.c_cc[VMIN] = 0;
     tty.c_cc[VTIME] = 1;
 
-    if (tcsetattr(fd, TCSANOW, &tty) != 0)
+    if (tcsetattr(portal->fd, TCSANOW, &tty) != 0)
     {
         printf("Error from tcsetattr: %s\n", strerror(errno));
-        return -1;
+        return false;
     }
 
-    return 0;
+    return true;
 }
 
 char *rtrim(char *s)
@@ -98,37 +116,37 @@ int msleep(long msec)
     return res;
 }
 
-void writeraw(int portal, char *s, int sendlen)
+void writeraw(struct Portal *portal, char *s, int sendlen)
 {
-    int writelen = write(portal, s, sendlen);
+    int writelen = write(portal->fd, s, sendlen);
     if (writelen != sendlen)
     {
         printf("Error from write: %d, %d\n", writelen, errno);
     }
-    tcdrain(portal); // wait for write
+    tcdrain(portal->fd); // wait for write
 }
 
-void writestr(int portal, char *s)
+void writestr(struct Portal *portal, char *s)
 {
     int sendlen = strlen(s) + 1;
     writeraw(portal, s, sendlen);
 }
 
-void writeeol(int portal)
+void writeeol(struct Portal *portal)
 {
     char s[] = {0x00};
     printf("Sending EOL\n");
     writeraw(portal, s, 1);
 }
 
-void writeeom(int portal)
+void writeeom(struct Portal *portal)
 {
     char s[] = {EOM};    
     printf("Sending EOM\n");
     writeraw(portal, s, 1);
 }
 
-void runcmdproc(int portal, char *key, char *path)
+void runcmdproc(struct Portal *portal, char *key, char *path)
 {
     char procbuf[BUFFER_SIZE];
     FILE *proc;
@@ -160,7 +178,7 @@ void runcmdproc(int portal, char *key, char *path)
     }
 }
 
-void runcmdbproc(int portal, char *key, char *path)
+void runcmdbproc(char *key, char *path)
 {
     printf("Forking process\n");
 
@@ -208,55 +226,59 @@ void runcmdbproc(int portal, char *key, char *path)
     }
 }
 
-void runcmd(int portal, char **cmds, int cmdcnt)
+void runcmd(struct Portal *portal)
 {
-    if (cmdcnt < 2)
+    if (portal->cmdstackpos < 2)
     {
         printf("All commands requires at least two arguments\n");
         return;
     }
     
-    if (strcmp(cmds[1], "proc") == 0)
+    if (strcmp(portal->cmdstack[1], "proc") == 0)
     {
         // Run process
-        if (cmdcnt < 3)
+        if (portal->cmdstackpos < 3)
         {
             printf("Process command requires three arguments\n");
             return;
         }
 
-        runcmdproc(portal, cmds[0], cmds[2]);
+        runcmdproc(portal, portal->cmdstack[0], portal->cmdstack[2]);
     }
-    else if (strcmp(cmds[1], "bproc") == 0)
+    else if (strcmp(portal->cmdstack[1], "bproc") == 0)
     {
         // Run background process
-        if (cmdcnt < 3)
+        if (portal->cmdstackpos < 3)
         {
             printf("Background process command requires three arguments\n");
             return;
         }
 
-        runcmdbproc(portal, cmds[0], cmds[2]);
+        runcmdbproc(portal->cmdstack[0], portal->cmdstack[2]);
     }
     else
     {
-        printf("Unknown command type: %s\n", cmds[1]);
+        printf("Unknown command type: %s\n", portal->cmdstack[1]);
     }
 }
 
-void readrom(int portal, char *rom)
+void readrom(struct Portal *portal, char *rom)
 {
-    if (strcmp(romcur, rom) == 0)
+    if (strcmp(_rom, rom) == 0)
         return;
+    
+    if (strlen(_rom) > 0)
+        free(_rom);
 
-    strcpy(romcur, rom);
+    _rom = malloc(strlen(rom) + 1);
+    strcpy(_rom, rom);
 
     writestr(portal, "rom");
-    writestr(portal, romcur);
+    writestr(portal, _rom);
     writeeom(portal);
 }
 
-void readcore(int portal)
+void readcore(struct Portal *portal, struct Notify *notify)
 {
     FILE *file;
     char core[BUFFER_SIZE];
@@ -269,20 +291,24 @@ void readcore(int portal)
 
     if (fgets(core, BUFFER_SIZE - 1, file) != NULL)
     {
-        if (strcmp(core, corecur) != 0)
+        if (strcmp(_core, core) != 0)
         {
             printf("Core: %s\n", core);
 
-            strcpy(corecur, core);
+            if (strlen(_core) > 0)
+                free(_core);
 
-            if (inoteroms > 0)
+            _core = malloc(strlen(core) + 1);
+            strcpy(_core, core);
+
+            if (notify->watchroms > 0)
             {
-                inotify_rm_watch(inote, inoteroms);
-                inoteroms = 0;
+                inotify_rm_watch(notify->id, notify->watchroms);
+                notify->watchroms = 0;
             }
 
             char gamespath[BUFFER_SIZE];
-            sprintf(gamespath, "/media/fat/games/%s", core);
+            sprintf(gamespath, "%s/%s", GAMES_PATH, core);
             printf("ROM path: %s\n", gamespath);
 
             DIR *gamesdir;
@@ -290,7 +316,7 @@ void readcore(int portal)
             {
                 closedir(gamesdir);
 
-                if ((inoteroms = inotify_add_watch(inote, gamespath, IN_OPEN)) < 0)
+                if ((notify->watchroms = inotify_add_watch(notify->id, gamespath, IN_OPEN)) < 0)
                 {
                     printf("Failed to watch ROM path\n");
                 }
@@ -301,7 +327,7 @@ void readcore(int portal)
             }
 
             writestr(portal, "core");
-            writestr(portal, corecur);
+            writestr(portal, _core);
             writeeom(portal);
 
             readrom(portal, "");
@@ -315,30 +341,65 @@ void readcore(int portal)
     fclose(file);
 }
 
-void checkinote(int portal)
+bool portalinit(struct Portal *portal, char *portalpath)
 {
-    int readlen = read(inote, inotebuf, EVENT_BUFFER_SIZE);
+    portal->fd = 0;
+    portal->cmdstackpos = 0;
+    portal->readbuf = malloc(BUFFER_SIZE);
+    portal->readpos = 0;
 
+    if ((portal->fd = open(portalpath, O_RDWR | O_NOCTTY | O_SYNC | O_NONBLOCK)) < 0) 
+    {
+        printf("Error opening %s: %s\n", portalpath, strerror(errno));
+        return false;
+    }
+
+    if (!setinterface(portal, B115200))
+    {
+        printf("Failed to configure portal\n");
+        return false;
+    }
+
+    return true;
+}
+
+bool portalframe(struct Portal *portal)
+{
+    int readlen = read(portal->fd, portal->readbuf + portal->readpos, BUFFER_SIZE - portal->readpos - 1);
     if (readlen > 0)
     {
-        struct inotify_event *event;
-        for (int i = 0; i < readlen; i += EVENT_SIZE + event->len)
+        for (int i = 0; i < readlen; i++)
         {
-            event = (struct inotify_event *) &inotebuf[i];
+            if (portal->readbuf[0] == EOM) // End of stack
+            {
+                printf("Running command\n");
+                
+                runcmd(portal);
 
-            if (event->wd == inotecore)
-            {
-                printf("Core changed\n");
-                readcore(portal);
+                for (int j = 0; j < portal->cmdstackpos; j++)
+                    free(portal->cmdstack[j]);
+
+                portal->cmdstackpos = 0;
+
+                if (readlen > i + 1)
+                    memcpy(portal->readbuf, portal->readbuf + 1, readlen - 1);
             }
-            else if (inoteroms > 0 && event->wd == inoteroms) 
+            else if (portal->readbuf[portal->readpos] == 0) // End of item
             {
-                if (event->len > 0)
-                {
-                    printf("Game opened\n");
-                    printf("%s\n", event->name);
-                    readrom(portal, event->name);
-                }
+                char *cmd = malloc(portal->readpos + 1);
+                memcpy(cmd, portal->readbuf, portal->readpos + 1);
+                portal->cmdstack[portal->cmdstackpos++] = cmd;
+
+                printf("Read %d: \"%s\"\n", portal->readpos, cmd);
+
+                if (readlen > i + 1)
+                    memcpy(portal->readbuf, portal->readbuf + portal->readpos + 1, portal->readpos + (readlen - i - 1));
+                
+                portal->readpos = 0;
+            }
+            else
+            {
+                portal->readpos++;
             }
         }
     }
@@ -349,96 +410,142 @@ void checkinote(int portal)
     else if (readlen < 0)
     {
         printf("Error from read: %d: %s\n", readlen, strerror(errno));
+        return false;
     }
     else // readlen == 0
     {  
         printf("Timeout from read\n");
+        return false;
     }
+
+    return true;
 }
 
-void process()
+void portalclose(struct Portal *portal)
 {
-    char *cmds[20];
-    int cmdspos = 0;
-    char readbuf[BUFFER_SIZE];
-    int readpos = 0;
+    for (int j = 0; j < portal->cmdstackpos; j++)
+        free(portal->cmdstack[j]);
 
-    int portal = open(PORTAL, O_RDWR | O_NOCTTY | O_SYNC | O_NONBLOCK);
-    if (portal < 0) 
+    free(portal->readbuf);
+
+    if (portal->fd > 0)
+        close(portal->fd);
+}
+
+bool notifyinit(struct Notify *notify, struct Portal *portal)
+{
+    notify->id = 0;
+    notify->readbuf = malloc(EVENT_BUFFER_SIZE);
+    notify->watchcore = 0;
+    notify->watchroms = 0;
+    notify->portal = portal;
+
+    if ((notify->id = inotify_init()) < 0)
     {
-        printf("Error opening %s: %s\n", PORTAL, strerror(errno));
-        return;
+        printf("Failed to initialize inotify");
+        return false;
     }
 
-    if (setinterface(portal, B115200) != 0)
-        return;
+    int flags = fcntl(notify->id, F_GETFL, 0);
+    fcntl(notify->id, F_SETFL, flags | O_NONBLOCK);
 
-    // Force read of core
-    corecur[0] = 0;
-    readcore(portal);
-
-    while (!_terminated)
+    if ((notify->watchcore = inotify_add_watch(notify->id, "/tmp/CORENAME", IN_MODIFY)) < 0)
     {
-        int readlen = read(portal, readbuf + readpos, BUFFER_SIZE - readpos - 1);
-        if (readlen > 0)
+        printf("Failed to watch /tmp/CORENAME");
+        return false;
+    }
+
+    return true;
+}
+
+bool notifyframe(struct Notify *notify)
+{
+    int readlen = read(notify->id, notify->readbuf, EVENT_BUFFER_SIZE);
+    if (readlen > 0)
+    {
+        struct inotify_event *event;
+        for (int i = 0; i < readlen; i += EVENT_SIZE + event->len)
         {
-            for (int i = 0; i < readlen; i++)
+            event = (struct inotify_event *) &notify->readbuf[i];
+
+            if (event->wd == notify->watchcore)
             {
-                if (readbuf[0] == EOM) // End of stack
+                printf("Core changed\n");
+                readcore(notify->portal, notify);
+            }
+            else if (notify->watchcore > 0 && event->wd == notify->watchroms)
+            {
+                if (event->len > 0)
                 {
-                    printf("Running command\n");
-                    
-                    runcmd(portal, cmds, cmdspos);
-
-                    for (int j = 0; j < cmdspos; j++)
-                        free(cmds[j]);
-                    
-                    cmdspos = 0;
-
-                    if (readlen > i + 1)
-                        memcpy(readbuf, readbuf + 1, readlen - 1);
-                }
-                else if (readbuf[readpos] == 0) // End of item
-                {
-                    char *cmd = malloc(readpos + 1);
-                    memcpy(cmd, readbuf, readpos + 1);
-                    cmds[cmdspos++] = cmd;
-
-                    printf("Read %d: \"%s\"\n", readpos, cmd);
-
-                    if (readlen > i + 1)
-                        memcpy(readbuf, readbuf + readpos + 1, readpos + (readlen - i - 1));
-                    
-                    readpos = 0;
-                }
-                else
-                {
-                    readpos++;
+                    printf("Game opened\n");
+                    printf("%s\n", event->name);
+                    readrom(notify->portal, event->name);
                 }
             }
         }
-        else if (readlen == -1)
-        {
-            // No data available
-        }
-        else if (readlen < 0)
-        {
-            printf("Error from read: %d: %s\n", readlen, strerror(errno));
-        }
-        else // readlen == 0
-        {  
-            printf("Timeout from read\n");
-        }
-
-        checkinote(portal);
-
-        msleep(100);
+    }
+    else if (readlen == -1)
+    {
+        // No data available
+    }
+    else if (readlen < 0)
+    {
+        printf("Error from notify read: %d: %s\n", readlen, strerror(errno));
+        return false;
+    }
+    else // readlen == 0
+    {  
+        printf("Timeout from notify read\n");
+        return false;
     }
 
-    for (int j = 0; j < cmdspos; j++)
-        free(cmds[j]);
+    return true;
+}
 
-    close(portal);
+void notifyclose(struct Notify *notify)
+{
+    free(notify->readbuf);
+
+    if (notify->id > 0)
+    {
+        if (notify->watchcore > 0)
+            inotify_rm_watch(notify->id, notify->watchcore);
+
+        if (notify->watchroms > 0)
+            inotify_rm_watch(notify->id, notify->watchroms);
+
+        close(notify->id);
+    }
+}
+
+void process(char *portalpath)
+{
+    struct Portal portal;
+    if (portalinit(&portal, portalpath))
+    {
+        struct Notify notify;
+        if (notifyinit(&notify, &portal))
+        {
+            // Force read of core
+            _core = "";
+            readcore(&portal, &notify);
+
+            while (!_terminated)
+            {
+                if (!portalframe(&portal))
+                    break;
+
+                if (!notifyframe(&notify))
+                    break;
+                
+                msleep(100);
+            }
+
+            notifyclose(&notify);
+        }
+
+        portalclose(&portal);
+    }
 }
 
 void signalhandler(int signal)
@@ -478,8 +585,8 @@ bool initialize()
     int rc;
 
 	_terminated = false;
-    corecur[0] = 0;
-    romcur[0] = 0;
+    _core = "";
+    _rom = "";
 
     char selfpath[BUFFER_SIZE];
     readlink("/proc/self/exe", selfpath, BUFFER_SIZE);
@@ -509,146 +616,128 @@ bool initialize()
     struct stat st = {0};
     if (stat(dbpath, &st) == -1)
     {
-        if ((rc = mkdir(dbpath, 0700)))
+        if ((rc = mkdir(dbpath, 0775)))
         {
             printf("Failed to create database directory\n");
             return false;
         }
     }
 
-    if ((rc = mdb_env_create(&_dbenv)))
+    if ((rc = mdb_env_create(&_db.env)))
     {
         printf("Failed to create database environment: %d\n", rc);
         return false;
     }
-    //Limit large enough to accommodate all our named dbs. This only starts to matter if the number gets large, otherwise it's just a bunch of extra entries in the main table.
-    mdb_env_set_maxdbs(_dbenv, 50);
-    //This is the maximum size of the db (but will not be used directly), so we make it large enough that we hopefully never run into the limit.
-    mdb_env_set_mapsize(_dbenv, (size_t)1048576 * (size_t)100000); // 1MB * 100000
-    if ((rc = mdb_env_open(_dbenv, dbpath, MDB_NOTLS, 0664)))
+
+    // Use default configuration for now
+    //mdb_env_set_maxdbs(_db.env, 5);
+    //mdb_env_set_mapsize(_db.env, (size_t)1048576 * (size_t)50); // 1MB * 50
+
+    if ((rc = mdb_env_open(_db.env, dbpath, 0, 0664)))
     {
         printf("Failed to open database environment: %d\n", rc);
         return false;
     }
 
-    if ((rc = mdb_txn_begin(_dbenv, NULL, 0, &_dbtxn))) 
+    MDB_txn *dbtxn;
+    if ((rc = mdb_txn_begin(_db.env, NULL, 0, &dbtxn))) 
     {
         printf("Failed to create transaction: %d\n", rc);
         return false;
     }
 
-    if ((rc = mdb_dbi_open(_dbtxn, "test", MDB_DUPSORT | MDB_CREATE, &_dbi)))
+    if ((rc = mdb_dbi_open(dbtxn, NULL, MDB_DUPSORT | MDB_CREATE, &_db.dbi)))
     {
         printf("Failed to open database: %d\n", rc);
         return false;
     }
 
-    if ((inote = inotify_init()) < 0)
+    if ((rc = mdb_txn_commit(dbtxn)))
     {
-        printf("Failed to initialize inotify");
+        printf("Failed to commit transaction: %d\n", rc);
         return false;
     }
-
-    int flags = fcntl(inote, F_GETFL, 0);
-    fcntl(inote, F_SETFL, flags | O_NONBLOCK);
-
-    if ((inotecore = inotify_add_watch(inote, "/tmp/CORENAME", IN_MODIFY)) < 0)
-    {
-        printf("Failed to watch /tmp/CORENAME");
-        return false;
-    }
-
-    inoteroms = 0;
 
 	return true;
 }
 
 void cleanup()
 {
-    int rc;
-
-    inotify_rm_watch(inote, inotecore);
-    if (inoteroms > 0)
-        inotify_rm_watch(inote, inoteroms);
-    close(inote);
-
-    if ((rc = mdb_txn_commit(_dbtxn)))
-    {
-        printf("Failed to commit transaction: %d\n", rc);
-    }
-    mdb_dbi_close(_dbenv, _dbi);
-    mdb_env_close(_dbenv);
+    mdb_dbi_close(_db.env, _db.dbi);
+    mdb_env_close(_db.env);
 }
 
 int main(int argc, char *argv[])
 {
+    char *portalpath = (argc > 1) ? argv[1] : "/dev/ttyACM2";
+
 	if (!initialize())
 		return 1;
 
-    int rc;
-    if (true)
-    {
-        //Initialize the key with the key we're looking for
-        char *testKey = "TESTING";
-        MDB_val key = {strlen(testKey) + 1, testKey};
+    // int rc;
+    // if (true)
+    // {
+    //     //Initialize the key with the key we're looking for
+    //     char *testKey = "TESTING";
+    //     MDB_val key = {strlen(testKey) + 1, testKey};
 
-        char *testData = "THIRD";
-        MDB_val data = {strlen(testData) + 1, testData};
+    //     char *testData = "THIRD";
+    //     MDB_val data = {strlen(testData) + 1, testData};
 
-        if ((rc = mdb_put(_dbtxn, _dbi, &key, &data, MDB_NODUPDATA)))
-        {
-            // MDB_KEYEXIST IS OK
-            printf("Failed to write data: %d\n", rc);
-        }
-    }
+    //     if ((rc = mdb_put(_dbtxn, _dbi, &key, &data, MDB_NODUPDATA)))
+    //     {
+    //         // MDB_KEYEXIST IS OK
+    //         printf("Failed to write data: %d\n", rc);
+    //     }
+    // }
 
-    if (true)
-    {
-        //Initialize the key with the key we're looking for
-        char *testKey = "TESTING";
-        MDB_val key = {strlen(testKey) + 1, testKey};
+    // if (true)
+    // {
+    //     //Initialize the key with the key we're looking for
+    //     char *testKey = "TESTING";
+    //     MDB_val key = {strlen(testKey) + 1, testKey};
 
-        char *testData = "ANOTHER";
-        MDB_val data = {strlen(testData) + 1, testData};
+    //     char *testData = "ANOTHER";
+    //     MDB_val data = {strlen(testData) + 1, testData};
 
-        if ((rc = mdb_del(_dbtxn, _dbi, &key, &data)))
-        {
-            // MDB_NOTFOUND IS OK
-            printf("Failed to write data: %d\n", rc);
-        }
-    }
+    //     if ((rc = mdb_del(_dbtxn, _dbi, &key, &data)))
+    //     {
+    //         // MDB_NOTFOUND IS OK
+    //         printf("Failed to write data: %d\n", rc);
+    //     }
+    // }
 
-    MDB_cursor *dbcur;
-    if ((rc = mdb_cursor_open(_dbtxn, _dbi, &dbcur)))
-    {
-        printf("Failed to open cursor: %d\n", rc);
-        return 1;
-    }
+    // MDB_cursor *dbcur;
+    // if ((rc = mdb_cursor_open(_dbtxn, _dbi, &dbcur)))
+    // {
+    //     printf("Failed to open cursor: %d\n", rc);
+    //     return 1;
+    // }
 
-    if (true)
-    {
-        //Initialize the key with the key we're looking for
-        char *testKey = "TESTING";
-        MDB_val key = {strlen(testKey) + 1, testKey};
-        MDB_val data;
+    // if (true)
+    // {
+    //     //Initialize the key with the key we're looking for
+    //     char *testKey = "TESTING";
+    //     MDB_val key = {strlen(testKey) + 1, testKey};
+    //     MDB_val data;
 
-        //Position the cursor, key and data are available in key
-        if ((rc = mdb_cursor_get(dbcur, &key, &data, MDB_SET_RANGE)))
-        {
-            printf("No data found: %d\n", rc);
-        }
-        else
-        {
-            printf("Data found!\n");
-            do
-            {
-                printf("Data: %s\n", (char *)data.mv_data);
-            }
-            while (!(rc = mdb_cursor_get(dbcur, &key, &data, MDB_NEXT)));
-        }
+    //     //Position the cursor, key and data are available in key
+    //     if ((rc = mdb_cursor_get(dbcur, &key, &data, MDB_SET_RANGE)))
+    //     {
+    //         printf("No data found: %d\n", rc);
+    //     }
+    //     else
+    //     {
+    //         printf("Data found!\n");
+    //         do
+    //         {
+    //             printf("Data: %s\n", (char *)data.mv_data);
+    //         }
+    //         while (!(rc = mdb_cursor_get(dbcur, &key, &data, MDB_NEXT)));
+    //     }
 
-        mdb_cursor_close(dbcur);
-    }
+    //     mdb_cursor_close(dbcur);
+    // }
 
 	setupsignals();
 
@@ -656,10 +745,17 @@ int main(int argc, char *argv[])
 	
 	while (!_terminated)
 	{
-		process();
+		process(portalpath);
 
         if (!_terminated)
-		    sleep(1);
+        {
+            printf("Connection failed. Attempting to reconnect in 10 seconds.\n");
+
+            for (int i = 0; i < 100 && !_terminated; i++)
+            {
+                msleep(100);
+            }
+        }
 	}
 
 	printf("\n");
