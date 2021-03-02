@@ -372,7 +372,7 @@ void runcmd_bproc(char *path)
     }
 }
 
-void runcmd_dbget(struct Portal *portal, char *cmdkey, char *key, char *value)
+void runcmd_dbget(struct Portal *portal, char *cmdkey, char *key)
 {
     if (dbtxnopen(true))
     {
@@ -380,13 +380,12 @@ void runcmd_dbget(struct Portal *portal, char *cmdkey, char *key, char *value)
 
         if (dbcuropen())
         {
-            char *key = "TESTING";
             MDB_val dbkey = {strlen(key) + 1, key};
             MDB_val dbdata;
 
             writestr(portal, cmdkey);
 
-            if ((rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE)))
+            if ((rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET)))
             {
                 printf("No data found: %d\n", rc);
             }
@@ -400,6 +399,37 @@ void runcmd_dbget(struct Portal *portal, char *cmdkey, char *key, char *value)
                     writestr(portal, (char *)dbdata.mv_data);
                 }
                 while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
+            }
+
+            writeeom(portal);
+
+            dbcurclose();
+        }
+
+        dbtxnclose();
+    }
+}
+
+void runcmd_dbchk(struct Portal *portal, char *cmdkey, char *key, char *data)
+{
+    if (dbtxnopen(true))
+    {
+        int rc;
+
+        if (dbcuropen())
+        {
+            MDB_val dbkey = {strlen(key) + 1, key};
+            MDB_val dbdata = {strlen(data) + 1, data};
+
+            writestr(portal, cmdkey);
+
+            if ((rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_GET_BOTH)))
+            {
+                writestr(portal, "0");
+            }
+            else
+            {
+                writestr(portal, "1");
             }
 
             writeeom(portal);
@@ -466,19 +496,29 @@ void runcmd(struct Portal *portal)
     }
     else if (strcmp(stack[1], "dbget") == 0)
     {
-        // Save database record
+        // Get database records for key
         if (count < 3)
         {
-            printf("'dbget' command requires three or four arguments\n");
+            printf("'dbget' command requires three arguments\n");
             return;
         }
 
-        char *value = (count == 3) ? NULL : stack[3];
-        runcmd_dbget(portal, stack[0], stack[2], value);
+        runcmd_dbget(portal, stack[0], stack[2]);
+    }
+    else if (strcmp(stack[1], "dbchk") == 0)
+    {
+        // Check if database record exists
+        if (count < 4)
+        {
+            printf("'dbchk' command requires four arguments\n");
+            return;
+        }
+
+        runcmd_dbchk(portal, stack[0], stack[2], stack[3]);
     }
     else if (strcmp(stack[1], "dbput") == 0)
     {
-        // Save database record
+        // Store database record
         if (count < 4)
         {
             printf("'dbput' command requires four arguments\n");
@@ -489,7 +529,7 @@ void runcmd(struct Portal *portal)
     }
     else if (strcmp(stack[1], "dbdel") == 0)
     {
-        // Delete database record
+        // Delete database record(s)
         if (count < 3)
         {
             printf("'dbdel' command requires three or four arguments\n");
