@@ -2,7 +2,9 @@ FROM ubuntu:20.04
 
 # Build tools
 RUN set -ex; \
-    apt-get update && apt-get install -y make wget xz-utils;
+    apt-get update ; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata; \
+    apt-get install -y make libtool gettext wget xz-utils;
 
 # Create build folder
 RUN set -ex; \
@@ -30,5 +32,20 @@ RUN set -ex; \
     mkdir -p /build/gcc/arm-linux-gnueabihf/include/libusb-1.0; \
     cp lmdb.h /build/gcc/arm-linux-gnueabihf/include/; \
     cp liblmdb.a /build/gcc/lib/gcc/arm-linux-gnueabihf/6.5.0/;
+
+# libfuse
+RUN set -ex; \
+    wget --no-verbose https://github.com/libfuse/libfuse/archive/fuse-2.9.7.tar.gz; \
+    tar xfz fuse-2.9.7.tar.gz; \
+    rm fuse-2.9.7.tar.gz; \
+    mv libfuse-fuse-2.9.7 libfuse; \
+    cd libfuse; \
+    ./makeconf.sh; \
+    ./configure --prefix=/build/gcc --host=arm-linux-gnueabihf --disable-static; \
+    make;
+
+#     mkdir -p /build/gcc/arm-linux-gnueabihf/include/libusb-1.0; \
+#     cp lmdb.h /build/gcc/arm-linux-gnueabihf/include/; \
+#     cp liblmdb.a /build/gcc/lib/gcc/arm-linux-gnueabihf/6.5.0/;
 
 WORKDIR /project
