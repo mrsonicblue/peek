@@ -1,4 +1,6 @@
 *.c.o
 *.c.d
-peek
-peek.elf
+/src/peek
+/src/peek.elf
+/fs/peekfs
+/fs/peekfs.elf

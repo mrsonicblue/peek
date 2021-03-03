@@ -28,10 +28,7 @@ RUN set -ex; \
     rm LMDB_0.9.28.tar.gz; \
     mv lmdb-LMDB_0.9.28 lmdb; \
     cd lmdb/libraries/liblmdb; \
-    make CC=/build/gcc/bin/arm-linux-gnueabihf-gcc AR=/build/gcc/bin/arm-linux-gnueabihf-ar liblmdb.a; \
-    mkdir -p /build/gcc/arm-linux-gnueabihf/include/libusb-1.0; \
-    cp lmdb.h /build/gcc/arm-linux-gnueabihf/include/; \
-    cp liblmdb.a /build/gcc/lib/gcc/arm-linux-gnueabihf/6.5.0/;
+    make CC=/build/gcc/bin/arm-linux-gnueabihf-gcc AR=/build/gcc/bin/arm-linux-gnueabihf-ar liblmdb.a;
 
 # libfuse
 RUN set -ex; \
@@ -43,9 +40,5 @@ RUN set -ex; \
     ./makeconf.sh; \
     ./configure --prefix=/build/gcc --host=arm-linux-gnueabihf --disable-static; \
     make;
-
-#     mkdir -p /build/gcc/arm-linux-gnueabihf/include/libusb-1.0; \
-#     cp lmdb.h /build/gcc/arm-linux-gnueabihf/include/; \
-#     cp liblmdb.a /build/gcc/lib/gcc/arm-linux-gnueabihf/6.5.0/;
 
 WORKDIR /project
