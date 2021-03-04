@@ -200,31 +200,6 @@ static int peek_getattr(const char *path, struct stat *stbuf)
     return res;
 }
 
-static int peek_access(const char *path, int mask)
-{
-    printf("peek_access: %s\n", path);
-	int res;
-
-	res = access(path, mask);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_readlink(const char *path, char *buf, size_t size)
-{
-    printf("peek_readlink: %s\n", path);
-	int res;
-
-	res = readlink(path, buf, size - 1);
-	if (res == -1)
-		return -errno;
-
-	buf[res] = '\0';
-	return 0;
-}
-
 static void peek_fakefill(void *buf, const char *name, fuse_fill_dir_t filler)
 {
     struct stat st;
@@ -356,139 +331,6 @@ static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     return 0;
 }
 
-static int peek_mknod(const char *path, mode_t mode, dev_t rdev)
-{
-    printf("peek_mknod: %s\n", path);
-	int res;
-
-	res = mknod(path, mode, rdev);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_mkdir(const char *path, mode_t mode)
-{
-    printf("peek_mkdir: %s\n", path);
-	int res;
-
-	res = mkdir(path, mode);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_unlink(const char *path)
-{
-    printf("peek_unlink: %s\n", path);
-	int res;
-
-	res = unlink(path);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_rmdir(const char *path)
-{
-    printf("peek_rmdir: %s\n", path);
-	int res;
-
-	res = rmdir(path);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_symlink(const char *from, const char *to)
-{
-    printf("peek_symlink: %s -> %s\n", from, to);
-	int res;
-
-	res = symlink(from, to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_rename(const char *from, const char *to)
-{
-    printf("peek_rename: %s -> %s\n", from, to);
-	int res;
-
-	res = rename(from, to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_link(const char *from, const char *to)
-{
-    printf("peek_link: %s -> %s\n", from, to);
-	int res;
-
-	res = link(from, to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_chmod(const char *path, mode_t mode)
-{
-    printf("peek_chmod: %s\n", path);
-	int res;
-
-	res = chmod(path, mode);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_chown(const char *path, uid_t uid, gid_t gid)
-{
-    printf("peek_chown: %s\n", path);
-	int res;
-
-	res = lchown(path, uid, gid);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_truncate(const char *path, off_t size)
-{
-    printf("peek_truncate: %s\n", path);
-	int res;
-
-	res = truncate(path, size);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int peek_utimens(const char *path, const struct timespec ts[2])
-{
-    printf("peek_utimens: %s\n", path);
-	int res;
-
-	/* don't use utime/utimes since they follow symlinks */
-	res = utimensat(0, path, ts, AT_SYMLINK_NOFOLLOW);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
 static int peek_open(const char *path, struct fuse_file_info *fi)
 {
     printf("peek_open: %s\n", path);
@@ -500,11 +342,12 @@ static int peek_open(const char *path, struct fuse_file_info *fi)
     if (!info.isfile)
         return -ENOENT;
 
-    int res;
-    if ((res = open(info.filepath, fi->flags)) == -1)
+    int fd;
+    if ((fd = open(info.filepath, fi->flags)) == -1)
         return -errno;
 
-    close(res);
+    fi->fh = fd;
+
     return 0;
 }
 
@@ -513,171 +356,31 @@ static int peek_read(const char *path, char *buf, size_t size, off_t offset,
 {
     printf("peek_read: %s\n", path);
 
-	(void) fi;
-
-    struct PathInfo info;
-    if (peek_parsepath(&info, path))
-        return -ENOENT;
-
-    if (!info.isfile)
-        return -ENOENT;
-
-    int fd;
-    if ((fd = open(info.filepath, O_RDONLY)) == -1)
-        return -errno;
+    (void) path;
 
     int res;
-    if ((res = pread(fd, buf, size, offset)) == -1)
+    if ((res = pread(fi->fh, buf, size, offset)) == -1)
         res = -errno;
 
-    close(fd);
     return res;
-}
-
-static int peek_write(const char *path, const char *buf, size_t size,
-		     off_t offset, struct fuse_file_info *fi)
-{
-    printf("peek_write: %s\n", path);
-	int fd;
-	int res;
-
-	(void) fi;
-	fd = open(path, O_WRONLY);
-	if (fd == -1)
-		return -errno;
-
-	res = pwrite(fd, buf, size, offset);
-	if (res == -1)
-		res = -errno;
-
-	close(fd);
-	return res;
-}
-
-static int peek_statfs(const char *path, struct statvfs *stbuf)
-{
-    printf("peek_statfs: %s\n", path);
-	int res;
-
-	res = statvfs(path, stbuf);
-	if (res == -1)
-		return -errno;
-
-	return 0;
 }
 
 static int peek_release(const char *path, struct fuse_file_info *fi)
 {
     printf("peek_release: %s\n", path);
-	/* Just a stub.	 This method is optional and can safely be left
-	   unimplemented */
 
-	(void) path;
-	(void) fi;
-	return 0;
-}
+    (void) path;
+    close(fi->fh);
 
-static int peek_fsync(const char *path, int isdatasync,
-		     struct fuse_file_info *fi)
-{
-    printf("peek_fsync: %s\n", path);
-	/* Just a stub.	 This method is optional and can safely be left
-	   unimplemented */
-
-	(void) path;
-	(void) isdatasync;
-	(void) fi;
-	return 0;
-}
-
-static int peek_fallocate(const char *path, int mode,
-			off_t offset, off_t length, struct fuse_file_info *fi)
-{
-    printf("peek_fallocate: %s\n", path);
-	int fd;
-	int res;
-
-	(void) fi;
-
-	if (mode)
-		return -EOPNOTSUPP;
-
-	fd = open(path, O_WRONLY);
-	if (fd == -1)
-		return -errno;
-
-	res = -posix_fallocate(fd, offset, length);
-
-	close(fd);
-	return res;
-}
-
-/* xattr operations are optional and can safely be left unimplemented */
-static int peek_setxattr(const char *path, const char *name, const char *value,
-			size_t size, int flags)
-{
-    printf("peek_setxattr: %s\n", path);
-	int res = lsetxattr(path, name, value, size, flags);
-	if (res == -1)
-		return -errno;
-	return 0;
-}
-
-static int peek_getxattr(const char *path, const char *name, char *value,
-			size_t size)
-{
-    printf("peek_getxattr: %s\n", path);
-	int res = lgetxattr(path, name, value, size);
-	if (res == -1)
-		return -errno;
-	return res;
-}
-
-static int peek_listxattr(const char *path, char *list, size_t size)
-{
-    printf("peek_listxattr: %s\n", path);
-	int res = llistxattr(path, list, size);
-	if (res == -1)
-		return -errno;
-	return res;
-}
-
-static int peek_removexattr(const char *path, const char *name)
-{
-    printf("peek_removexattr: %s\n", path);
-	int res = lremovexattr(path, name);
-	if (res == -1)
-		return -errno;
 	return 0;
 }
 
 static struct fuse_operations peek_oper = {
 	.getattr	= peek_getattr,
-	.access		= peek_access,
-	.readlink	= peek_readlink,
 	.readdir	= peek_readdir,
-	.mknod		= peek_mknod,
-	.mkdir		= peek_mkdir,
-	.symlink	= peek_symlink,
-	.unlink		= peek_unlink,
-	.rmdir		= peek_rmdir,
-	.rename		= peek_rename,
-	.link		= peek_link,
-	.chmod		= peek_chmod,
-	.chown		= peek_chown,
-	.truncate	= peek_truncate,
-	.utimens	= peek_utimens,
 	.open		= peek_open,
 	.read		= peek_read,
-	.write		= peek_write,
-	.statfs		= peek_statfs,
-	.release	= peek_release,
-	.fsync		= peek_fsync,
-	.fallocate	= peek_fallocate,
-	.setxattr	= peek_setxattr,
-	.getxattr	= peek_getxattr,
-	.listxattr	= peek_listxattr,
-	.removexattr	= peek_removexattr,
+	.release	= peek_release
 };
 
 static int initialize(void)
