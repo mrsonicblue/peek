@@ -10,195 +10,401 @@
 
 #define FUSE_USE_VERSION 26
 
-#include <fuse_lowlevel.h>
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
+#ifdef linux
+/* For pread()/pwrite()/utimensat() */
+#define _XOPEN_SOURCE 700
+#endif
+
+#include <fuse.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <unistd.h>
-#include <assert.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <errno.h>
+#include <sys/time.h>
+#ifdef HAVE_SETXATTR
+#include <sys/xattr.h>
+#endif
 #include <db.h>
-
-#define BUFFER_SIZE 4096
-
-static const char *hello_str = "Hello World!\n";
-static const char *hello_name = "hello";
 
 struct Database _db;
 
-static int hello_stat(fuse_ino_t ino, struct stat *stbuf)
+static int peek_getattr(const char *path, struct stat *stbuf)
 {
-    printf("stat\n");
+	int res;
 
-	stbuf->st_ino = ino;
-	switch (ino) {
-	case 1:
-		stbuf->st_mode = S_IFDIR | 0755;
-		stbuf->st_nlink = 2;
-		break;
+	res = lstat(path, stbuf);
+	if (res == -1)
+		return -errno;
 
-	case 2:
-		stbuf->st_mode = S_IFREG | 0444;
-		stbuf->st_nlink = 1;
-		stbuf->st_size = strlen(hello_str);
-		break;
-
-	default:
-		return -1;
-	}
 	return 0;
 }
 
-static void hello_ll_getattr(fuse_req_t req, fuse_ino_t ino,
-			     struct fuse_file_info *fi)
+static int peek_access(const char *path, int mask)
 {
-    printf("getattr\n");
+	int res;
 
-	struct stat stbuf;
+	res = access(path, mask);
+	if (res == -1)
+		return -errno;
 
-	(void) fi;
-
-	memset(&stbuf, 0, sizeof(stbuf));
-	if (hello_stat(ino, &stbuf) == -1)
-		fuse_reply_err(req, ENOENT);
-	else
-		fuse_reply_attr(req, &stbuf, 1.0);
+	return 0;
 }
 
-static void hello_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
+static int peek_readlink(const char *path, char *buf, size_t size)
 {
-    printf("lookup\n");
+	int res;
 
-	struct fuse_entry_param e;
+	res = readlink(path, buf, size - 1);
+	if (res == -1)
+		return -errno;
 
-	if (parent != 1 || strcmp(name, hello_name) != 0)
-		fuse_reply_err(req, ENOENT);
-	else {
-		memset(&e, 0, sizeof(e));
-		e.ino = 2;
-		e.attr_timeout = 1.0;
-		e.entry_timeout = 1.0;
-		hello_stat(e.ino, &e.attr);
+	buf[res] = '\0';
+	return 0;
+}
 
-		fuse_reply_entry(req, &e);
+
+static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+		       off_t offset, struct fuse_file_info *fi)
+{
+	DIR *dp;
+	struct dirent *de;
+
+	(void) offset;
+	(void) fi;
+
+	dp = opendir(path);
+	if (dp == NULL)
+		return -errno;
+
+	while ((de = readdir(dp)) != NULL) {
+		struct stat st;
+		memset(&st, 0, sizeof(st));
+		st.st_ino = de->d_ino;
+		st.st_mode = de->d_type << 12;
+		if (filler(buf, de->d_name, &st, 0))
+			break;
 	}
+
+	closedir(dp);
+	return 0;
 }
 
-struct dirbuf {
-	char *p;
-	size_t size;
-};
-
-static void dirbuf_add(fuse_req_t req, struct dirbuf *b, const char *name,
-		       fuse_ino_t ino)
+static int peek_mknod(const char *path, mode_t mode, dev_t rdev)
 {
-	struct stat stbuf;
-	size_t oldsize = b->size;
-	b->size += fuse_add_direntry(req, NULL, 0, name, NULL, 0);
-	b->p = (char *) realloc(b->p, b->size);
-	memset(&stbuf, 0, sizeof(stbuf));
-	stbuf.st_ino = ino;
-	fuse_add_direntry(req, b->p + oldsize, b->size - oldsize, name, &stbuf,
-			  b->size);
-}
+	int res;
 
-#define min(x, y) ((x) < (y) ? (x) : (y))
-
-static int reply_buf_limited(fuse_req_t req, const char *buf, size_t bufsize,
-			     off_t off, size_t maxsize)
-{
-	if (off < bufsize)
-		return fuse_reply_buf(req, buf + off,
-				      min(bufsize - off, maxsize));
+	/* On Linux this could just be 'mknod(path, mode, rdev)' but this
+	   is more portable */
+	if (S_ISREG(mode)) {
+		res = open(path, O_CREAT | O_EXCL | O_WRONLY, mode);
+		if (res >= 0)
+			res = close(res);
+	} else if (S_ISFIFO(mode))
+		res = mkfifo(path, mode);
 	else
-		return fuse_reply_buf(req, NULL, 0);
+		res = mknod(path, mode, rdev);
+	if (res == -1)
+		return -errno;
+
+	return 0;
 }
 
-static void hello_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
-			     off_t off, struct fuse_file_info *fi)
+static int peek_mkdir(const char *path, mode_t mode)
 {
-    printf("readdir\n");
+	int res;
+
+	res = mkdir(path, mode);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+static int peek_unlink(const char *path)
+{
+	int res;
+
+	res = unlink(path);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+static int peek_rmdir(const char *path)
+{
+	int res;
+
+	res = rmdir(path);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+static int peek_symlink(const char *from, const char *to)
+{
+	int res;
+
+	res = symlink(from, to);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+static int peek_rename(const char *from, const char *to)
+{
+	int res;
+
+	res = rename(from, to);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+static int peek_link(const char *from, const char *to)
+{
+	int res;
+
+	res = link(from, to);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+static int peek_chmod(const char *path, mode_t mode)
+{
+	int res;
+
+	res = chmod(path, mode);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+static int peek_chown(const char *path, uid_t uid, gid_t gid)
+{
+	int res;
+
+	res = lchown(path, uid, gid);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+static int peek_truncate(const char *path, off_t size)
+{
+	int res;
+
+	res = truncate(path, size);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+#ifdef HAVE_UTIMENSAT
+static int peek_utimens(const char *path, const struct timespec ts[2])
+{
+	int res;
+
+	/* don't use utime/utimes since they follow symlinks */
+	res = utimensat(0, path, ts, AT_SYMLINK_NOFOLLOW);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+#endif
+
+static int peek_open(const char *path, struct fuse_file_info *fi)
+{
+	int res;
+
+	res = open(path, fi->flags);
+	if (res == -1)
+		return -errno;
+
+	close(res);
+	return 0;
+}
+
+static int peek_read(const char *path, char *buf, size_t size, off_t offset,
+		    struct fuse_file_info *fi)
+{
+	int fd;
+	int res;
+
+	(void) fi;
+	fd = open(path, O_RDONLY);
+	if (fd == -1)
+		return -errno;
+
+	res = pread(fd, buf, size, offset);
+	if (res == -1)
+		res = -errno;
+
+	close(fd);
+	return res;
+}
+
+static int peek_write(const char *path, const char *buf, size_t size,
+		     off_t offset, struct fuse_file_info *fi)
+{
+	int fd;
+	int res;
+
+	(void) fi;
+	fd = open(path, O_WRONLY);
+	if (fd == -1)
+		return -errno;
+
+	res = pwrite(fd, buf, size, offset);
+	if (res == -1)
+		res = -errno;
+
+	close(fd);
+	return res;
+}
+
+static int peek_statfs(const char *path, struct statvfs *stbuf)
+{
+	int res;
+
+	res = statvfs(path, stbuf);
+	if (res == -1)
+		return -errno;
+
+	return 0;
+}
+
+static int peek_release(const char *path, struct fuse_file_info *fi)
+{
+	/* Just a stub.	 This method is optional and can safely be left
+	   unimplemented */
+
+	(void) path;
+	(void) fi;
+	return 0;
+}
+
+static int peek_fsync(const char *path, int isdatasync,
+		     struct fuse_file_info *fi)
+{
+	/* Just a stub.	 This method is optional and can safely be left
+	   unimplemented */
+
+	(void) path;
+	(void) isdatasync;
+	(void) fi;
+	return 0;
+}
+
+#ifdef HAVE_POSIX_FALLOCATE
+static int peek_fallocate(const char *path, int mode,
+			off_t offset, off_t length, struct fuse_file_info *fi)
+{
+	int fd;
+	int res;
 
 	(void) fi;
 
-	if (ino != 1)
-		fuse_reply_err(req, ENOTDIR);
-	else {
-		struct dirbuf b;
+	if (mode)
+		return -EOPNOTSUPP;
 
-		memset(&b, 0, sizeof(b));
-		dirbuf_add(req, &b, ".", 1);
-		dirbuf_add(req, &b, "..", 1);
+	fd = open(path, O_WRONLY);
+	if (fd == -1)
+		return -errno;
 
-        if (!dbtxnopen(&_db, 1))
-        {
-            int rc;
+	res = -posix_fallocate(fd, offset, length);
 
-            if (!dbcuropen(&_db))
-            {
-                const char *key = "TESTING";
-                MDB_val dbkey = {strlen(key) + 1, (void *)key};
-                MDB_val dbdata;
-
-                if ((rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE)))
-                {
-                    printf("No data found: %d\n", rc);
-                }
-                else
-                {
-                    printf("Data found!\n");
-                    do
-                    {
-                        printf("Data: %s\n", (char *)dbdata.mv_data);
-                        dirbuf_add(req, &b, (char *)dbdata.mv_data, 2);
-                    }
-                    while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
-                }
-
-                dbcurclose(&_db);
-            }
-
-            dbtxnclose(&_db);
-        }
-
-		//dirbuf_add(req, &b, hello_name, 2);
-
-		reply_buf_limited(req, b.p, b.size, off, size);
-		free(b.p);
-	}
+	close(fd);
+	return res;
 }
+#endif
 
-static void hello_ll_open(fuse_req_t req, fuse_ino_t ino,
-			  struct fuse_file_info *fi)
+#ifdef HAVE_SETXATTR
+/* xattr operations are optional and can safely be left unimplemented */
+static int peek_setxattr(const char *path, const char *name, const char *value,
+			size_t size, int flags)
 {
-    printf("open\n");
-
-	if (ino != 2)
-		fuse_reply_err(req, EISDIR);
-	else if ((fi->flags & 3) != O_RDONLY)
-		fuse_reply_err(req, EACCES);
-	else
-		fuse_reply_open(req, fi);
+	int res = lsetxattr(path, name, value, size, flags);
+	if (res == -1)
+		return -errno;
+	return 0;
 }
 
-static void hello_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size,
-			  off_t off, struct fuse_file_info *fi)
+static int peek_getxattr(const char *path, const char *name, char *value,
+			size_t size)
 {
-    printf("read\n");
-
-	(void) fi;
-
-	assert(ino == 2);
-	reply_buf_limited(req, hello_str, strlen(hello_str), off, size);
+	int res = lgetxattr(path, name, value, size);
+	if (res == -1)
+		return -errno;
+	return res;
 }
 
-static struct fuse_lowlevel_ops hello_ll_oper = {
-	.lookup		= hello_ll_lookup,
-	.getattr	= hello_ll_getattr,
-	.readdir	= hello_ll_readdir,
-	.open		= hello_ll_open,
-	.read		= hello_ll_read,
+static int peek_listxattr(const char *path, char *list, size_t size)
+{
+	int res = llistxattr(path, list, size);
+	if (res == -1)
+		return -errno;
+	return res;
+}
+
+static int peek_removexattr(const char *path, const char *name)
+{
+	int res = lremovexattr(path, name);
+	if (res == -1)
+		return -errno;
+	return 0;
+}
+#endif /* HAVE_SETXATTR */
+
+static struct fuse_operations peek_oper = {
+	.getattr	= peek_getattr,
+	.access		= peek_access,
+	.readlink	= peek_readlink,
+	.readdir	= peek_readdir,
+	.mknod		= peek_mknod,
+	.mkdir		= peek_mkdir,
+	.symlink	= peek_symlink,
+	.unlink		= peek_unlink,
+	.rmdir		= peek_rmdir,
+	.rename		= peek_rename,
+	.link		= peek_link,
+	.chmod		= peek_chmod,
+	.chown		= peek_chown,
+	.truncate	= peek_truncate,
+#ifdef HAVE_UTIMENSAT
+	.utimens	= peek_utimens,
+#endif
+	.open		= peek_open,
+	.read		= peek_read,
+	.write		= peek_write,
+	.statfs		= peek_statfs,
+	.release	= peek_release,
+	.fsync		= peek_fsync,
+#ifdef HAVE_POSIX_FALLOCATE
+	.fallocate	= peek_fallocate,
+#endif
+#ifdef HAVE_SETXATTR
+	.setxattr	= peek_setxattr,
+	.getxattr	= peek_getxattr,
+	.listxattr	= peek_listxattr,
+	.removexattr	= peek_removexattr,
+#endif
 };
 
 static int initialize(void)
@@ -221,29 +427,32 @@ int main(int argc, char *argv[])
     if (initialize())
         return 1;
 
-    struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-    struct fuse_chan *ch;
-    char *mountpoint;
-    int err = -1;
+    umask(0);
+    int err = fuse_main(argc, argv, &peek_oper, NULL);
 
-    if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 &&
-        (ch = fuse_mount(mountpoint, &args)) != NULL) {
-        struct fuse_session *se;
+    // struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+    // struct fuse_chan *ch;
+    // char *mountpoint;
+    // int err = -1;
 
-        se = fuse_lowlevel_new(&args, &hello_ll_oper,
-                        sizeof(hello_ll_oper), NULL);
-        if (se != NULL) {
-            if (fuse_set_signal_handlers(se) != -1) {
-                fuse_session_add_chan(se, ch);
-                err = fuse_session_loop(se);
-                fuse_remove_signal_handlers(se);
-                fuse_session_remove_chan(ch);
-            }
-            fuse_session_destroy(se);
-        }
-        fuse_unmount(mountpoint, ch);
-    }
-    fuse_opt_free_args(&args);
+    // if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 &&
+    //     (ch = fuse_mount(mountpoint, &args)) != NULL) {
+    //     struct fuse_session *se;
+
+    //     se = fuse_new(ch, &args, &peek_oper,
+    //                     sizeof(peek_oper), NULL);
+    //     if (se != NULL) {
+    //         if (fuse_set_signal_handlers(se) != -1) {
+    //             fuse_session_add_chan(se, ch);
+    //             err = fuse_session_loop(se);
+    //             fuse_remove_signal_handlers(se);
+    //             fuse_session_remove_chan(ch);
+    //         }
+    //         fuse_session_destroy(se);
+    //     }
+    //     fuse_unmount(mountpoint, ch);
+    // }
+    // fuse_opt_free_args(&args);
 
     printf("\n");
     printf("Cleaning up!\n");
