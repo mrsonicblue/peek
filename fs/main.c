@@ -13,172 +13,19 @@
 #include <fuse_lowlevel.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <assert.h>
-#include <lmdb.h>
+#include <db.h>
 
 #define BUFFER_SIZE 4096
-
-struct Database
-{
-    struct MDB_env *env;
-    MDB_dbi dbi;
-    MDB_txn *txn;
-    bool txnreadonly;
-    MDB_cursor *cur;
-};
 
 static const char *hello_str = "Hello World!\n";
 static const char *hello_name = "hello";
 
 struct Database _db;
-
-static bool dbtxnopen(bool readonly)
-{
-    if (_db.txn)
-    {
-        printf("Transaction already open\n");
-        return false;
-    }
-
-    int rc;
-    int flags = readonly ? MDB_RDONLY : 0;
-    if ((rc = mdb_txn_begin(_db.env, NULL, flags, &_db.txn))) 
-    {
-        printf("Failed to create transaction: %d\n", rc);
-        return false;
-    }
-
-    _db.txnreadonly = readonly;
-
-    return true;
-}
-
-static bool dbtxncheck(void)
-{
-    if (!_db.txn)
-    {
-        printf("No open transaction\n");
-        return false;
-    }
-
-    return true;
-}
-
-static bool dbtxnclose(void)
-{
-    if (!dbtxncheck())
-        return false;
-
-    int rc;
-    if (_db.txnreadonly)
-    {
-        mdb_txn_abort(_db.txn);
-    }
-    else
-    {
-        if ((rc = mdb_txn_commit(_db.txn)))
-        {
-            printf("Failed to commit transaction: %d\n", rc);
-            return false;
-        }
-    }
-
-    _db.txn = NULL;
-
-    return true;
-}
-
-static bool dbcuropen(void)
-{
-    if (_db.cur)
-    {
-        printf("Cursor already open\n");
-        return false;
-    }
-
-    int rc;
-    if ((rc = mdb_cursor_open(_db.txn, _db.dbi, &_db.cur)))
-    {
-        printf("Failed to open cursor: %d\n", rc);
-        return false;
-    }
-
-    return true;
-}
-
-static bool dbcurcheck(void)
-{
-    if (!_db.cur)
-    {
-        printf("No open cursor\n");
-        return false;
-    }
-
-    return true;
-}
-
-static bool dbcurclose(void)
-{
-    if (!dbcurcheck())
-        return false;
-
-    mdb_cursor_close(_db.cur);
-    _db.cur = NULL;
-
-    return true;
-}
-
-static bool dbput(char *key, char *data)
-{
-    if (!dbtxncheck())
-        return false;
-    
-    MDB_val dbkey = {strlen(key) + 1, key};
-    MDB_val dbdata = {strlen(data) + 1, data};
-
-    int rc;
-    if ((rc = mdb_put(_db.txn, _db.dbi, &dbkey, &dbdata, MDB_NODUPDATA)))
-    {
-        if (rc != MDB_KEYEXIST)
-        {
-            printf("Failed to write data: %d\n", rc);
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static bool dbdel(char *key, char *data)
-{
-    if (!dbtxncheck())
-        return false;
-
-    MDB_val dbkey = {strlen(key) + 1, key};
-    MDB_val dbdata;
-    if (data)
-    {
-        dbdata.mv_size = strlen(data) + 1;
-        dbdata.mv_data = data;
-    }
-
-    int rc;
-    if ((rc = mdb_del(_db.txn, _db.dbi, &dbkey, data ? &dbdata : NULL)))
-    {
-        if (rc != MDB_NOTFOUND)
-        {
-            printf("Failed to delete data: %d\n", rc);
-            return false;
-        }
-    }
-
-    return true;
-}
 
 static int hello_stat(fuse_ino_t ino, struct stat *stbuf)
 {
@@ -284,14 +131,14 @@ static void hello_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 		dirbuf_add(req, &b, ".", 1);
 		dirbuf_add(req, &b, "..", 1);
 
-        if (dbtxnopen(true))
+        if (!dbtxnopen(&_db, 1))
         {
             int rc;
 
-            if (dbcuropen())
+            if (!dbcuropen(&_db))
             {
-                char *key = "TESTING";
-                MDB_val dbkey = {strlen(key) + 1, key};
+                const char *key = "TESTING";
+                MDB_val dbkey = {strlen(key) + 1, (void *)key};
                 MDB_val dbdata;
 
                 if ((rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE)))
@@ -309,10 +156,10 @@ static void hello_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
                     while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
                 }
 
-                dbcurclose();
+                dbcurclose(&_db);
             }
 
-            dbtxnclose();
+            dbtxnclose(&_db);
         }
 
 		//dirbuf_add(req, &b, hello_name, 2);
@@ -354,77 +201,24 @@ static struct fuse_lowlevel_ops hello_ll_oper = {
 	.read		= hello_ll_read,
 };
 
-static bool initialize(void)
+static int initialize(void)
 {
-    int rc;
-
-    char selfpath[BUFFER_SIZE];
-    readlink("/proc/self/exe", selfpath, BUFFER_SIZE);
-
-    char *lastslash;
-    if ((lastslash = strrchr(selfpath, '/')) == NULL)
-    {
-        printf("Failed to find program path");
-        return false;
-    }
-    *lastslash = 0;
-
-    printf("Program directory: %s\n", selfpath);
-
-    char dbpath[BUFFER_SIZE];
-    sprintf(dbpath, "%s/data", selfpath);
-
-    printf("Database path: %s\n", dbpath);
-
-    struct stat st = {0};
-    if (stat(dbpath, &st) == -1)
-    {
-        if ((rc = mkdir(dbpath, 0775)))
-        {
-            printf("Failed to create database directory\n");
-            return false;
-        }
-    }
-
-    if ((rc = mdb_env_create(&_db.env)))
-    {
-        printf("Failed to create database environment: %d\n", rc);
-        return false;
-    }
-
-    // Use default configuration for now
-    //mdb_env_set_maxdbs(_db.env, 5);
-    //mdb_env_set_mapsize(_db.env, (size_t)1048576 * (size_t)50); // 1MB * 50
-
-    if ((rc = mdb_env_open(_db.env, dbpath, 0, 0664)))
-    {
-        printf("Failed to open database environment: %d\n", rc);
-        return false;
-    }
-
-    if (dbtxnopen(false))
-    {
-        if ((rc = mdb_dbi_open(_db.txn, NULL, MDB_DUPSORT | MDB_CREATE, &_db.dbi)))
-        {
-            printf("Failed to open database: %d\n", rc);
-            return false;
-        }
-
-        dbtxnclose();
-    }
-
-	return true;
+    if (dbopen(&_db))
+        return -1;
+    
+    return 0;
 }
 
 static void cleanup(void)
 {
-    mdb_dbi_close(_db.env, _db.dbi);
-    mdb_env_close(_db.env);
+    dbclose(&_db);
 }
 
 int main(int argc, char *argv[])
 {
-    if (!initialize())
+    printf("Starting up...\n");
+
+    if (initialize())
         return 1;
 
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
