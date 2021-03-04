@@ -73,6 +73,8 @@ static int peek_readlink(const char *path, char *buf, size_t size)
 static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
 {
+    printf("readdir: %s\n", path);
+
 	DIR *dp;
 	struct dirent *de;
 
@@ -100,16 +102,7 @@ static int peek_mknod(const char *path, mode_t mode, dev_t rdev)
 {
 	int res;
 
-	/* On Linux this could just be 'mknod(path, mode, rdev)' but this
-	   is more portable */
-	if (S_ISREG(mode)) {
-		res = open(path, O_CREAT | O_EXCL | O_WRONLY, mode);
-		if (res >= 0)
-			res = close(res);
-	} else if (S_ISFIFO(mode))
-		res = mkfifo(path, mode);
-	else
-		res = mknod(path, mode, rdev);
+	res = mknod(path, mode, rdev);
 	if (res == -1)
 		return -errno;
 
@@ -420,6 +413,32 @@ static void cleanup(void)
     dbclose(&_db);
 }
 
+static int fuse_main_peek(int argc, char *argv[], const struct fuse_operations *op, size_t op_size, void *user_data)
+{
+	struct fuse *fuse;
+	char *mountpoint;
+	int multithreaded;
+	int res;
+
+	fuse = fuse_setup(argc, argv, op, op_size, &mountpoint, &multithreaded, user_data);
+	if (fuse == NULL)
+		return 1;
+
+    printf("Mountpoint: %s\n", mountpoint);
+
+	if (multithreaded)
+		res = fuse_loop_mt(fuse);
+	else
+		res = fuse_loop(fuse);
+
+	fuse_teardown(fuse, mountpoint);
+	if (res == -1)
+		return 1;
+
+	return 0;
+}
+
+
 int main(int argc, char *argv[])
 {
     printf("Starting up...\n");
@@ -428,31 +447,7 @@ int main(int argc, char *argv[])
         return 1;
 
     umask(0);
-    int err = fuse_main(argc, argv, &peek_oper, NULL);
-
-    // struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-    // struct fuse_chan *ch;
-    // char *mountpoint;
-    // int err = -1;
-
-    // if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 &&
-    //     (ch = fuse_mount(mountpoint, &args)) != NULL) {
-    //     struct fuse_session *se;
-
-    //     se = fuse_new(ch, &args, &peek_oper,
-    //                     sizeof(peek_oper), NULL);
-    //     if (se != NULL) {
-    //         if (fuse_set_signal_handlers(se) != -1) {
-    //             fuse_session_add_chan(se, ch);
-    //             err = fuse_session_loop(se);
-    //             fuse_remove_signal_handlers(se);
-    //             fuse_session_remove_chan(ch);
-    //         }
-    //         fuse_session_destroy(se);
-    //     }
-    //     fuse_unmount(mountpoint, ch);
-    // }
-    // fuse_opt_free_args(&args);
+    int err = fuse_main_peek(argc, argv, &peek_oper, sizeof(peek_oper), NULL);
 
     printf("\n");
     printf("Cleaning up!\n");
