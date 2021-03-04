@@ -5,8 +5,11 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include "db.h"
+#include "path.h"
 
 #define BUFFER_SIZE 4096
+
+static char *_dbpath;
 
 int dbopen(struct Database *db)
 {
@@ -14,28 +17,21 @@ int dbopen(struct Database *db)
 
     *db = (const struct Database){ 0 };
 
-    char selfpath[BUFFER_SIZE];
-    readlink("/proc/self/exe", selfpath, BUFFER_SIZE);
-
-    char *lastslash;
-    if ((lastslash = strrchr(selfpath, '/')) == NULL)
+    if (!_dbpath)
     {
-        printf("Failed to find program path");
-        return -1;
+        if ((_dbpath = pathmake("data")) == NULL)
+        {
+            printf("Failed to get database path\n");
+            return -1;
+        }
     }
-    *lastslash = 0;
 
-    printf("Program directory: %s\n", selfpath);
-
-    char dbpath[BUFFER_SIZE];
-    sprintf(dbpath, "%s/data", selfpath);
-
-    printf("Database path: %s\n", dbpath);
+    printf("Database path: %s\n", _dbpath);
 
     struct stat st = {0};
-    if (stat(dbpath, &st) == -1)
+    if (stat(_dbpath, &st) == -1)
     {
-        if ((rc = mkdir(dbpath, 0775)))
+        if ((rc = mkdir(_dbpath, 0775)))
         {
             printf("Failed to create database directory\n");
             return -1;
@@ -52,7 +48,7 @@ int dbopen(struct Database *db)
     //mdb_env_set_maxdbs(db->env, 5);
     //mdb_env_set_mapsize(db->env, (size_t)1048576 * (size_t)50); // 1MB * 50
 
-    if ((rc = mdb_env_open(db->env, dbpath, 0, 0664)))
+    if ((rc = mdb_env_open(db->env, _dbpath, 0, 0664)))
     {
         printf("Failed to open database environment: %d\n", rc);
         return -1;
