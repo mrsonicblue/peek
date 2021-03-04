@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <signal.h>
 #include <string.h>
 #include <ctype.h>
@@ -14,7 +13,7 @@
 #include <sys/wait.h>
 #include <paths.h>
 #include <termios.h>
-#include <lmdb.h>
+#include <db.h>
 
 #define GAMES_PATH "/media/fat/games"
 #define BUFFER_SIZE 4096
@@ -31,15 +30,6 @@ struct Portal
     int readpos;
 };
 
-struct Database
-{
-    struct MDB_env *env;
-    MDB_dbi dbi;
-    MDB_txn *txn;
-    bool txnreadonly;
-    MDB_cursor *cur;
-};
-
 struct Notify
 {
     int id;
@@ -49,7 +39,7 @@ struct Notify
     struct Portal *portal;
 };
 
-static volatile bool _terminated;
+static volatile int _terminated;
 char *_mbcpath;
 char *_core;
 char *_rom;
@@ -60,17 +50,17 @@ void shutdown()
 	if (_terminated)
 		return;
 
-	_terminated = true;
+	_terminated = 1;
 }
 
-bool setinterface(struct Portal *portal, int speed)
+int setinterface(struct Portal *portal, int speed)
 {
     struct termios tty;
 
     if (tcgetattr(portal->fd, &tty) < 0)
     {
         printf("Error from tcgetattr: %s\n", strerror(errno));
-        return false;
+        return -1;
     }
 
     cfsetospeed(&tty, (speed_t)speed);
@@ -84,10 +74,10 @@ bool setinterface(struct Portal *portal, int speed)
     if (tcsetattr(portal->fd, TCSANOW, &tty) != 0)
     {
         printf("Error from tcsetattr: %s\n", strerror(errno));
-        return false;
+        return -1;
     }
 
-    return true;
+    return 0;
 }
 
 char *rtrim(char *s)
@@ -117,149 +107,6 @@ int msleep(long msec)
     } while (res && errno == EINTR);
 
     return res;
-}
-
-bool dbtxnopen(bool readonly)
-{
-    if (_db.txn)
-    {
-        printf("Transaction already open\n");
-        return false;
-    }
-
-    int rc;
-    int flags = readonly ? MDB_RDONLY : 0;
-    if ((rc = mdb_txn_begin(_db.env, NULL, flags, &_db.txn))) 
-    {
-        printf("Failed to create transaction: %d\n", rc);
-        return false;
-    }
-
-    _db.txnreadonly = readonly;
-
-    return true;
-}
-
-bool dbtxncheck()
-{
-    if (!_db.txn)
-    {
-        printf("No open transaction\n");
-        return false;
-    }
-
-    return true;
-}
-
-bool dbtxnclose()
-{
-    if (!dbtxncheck())
-        return false;
-
-    int rc;
-    if (_db.txnreadonly)
-    {
-        mdb_txn_abort(_db.txn);
-    }
-    else
-    {
-        if ((rc = mdb_txn_commit(_db.txn)))
-        {
-            printf("Failed to commit transaction: %d\n", rc);
-            return false;
-        }
-    }
-
-    _db.txn = NULL;
-
-    return true;
-}
-
-bool dbcuropen()
-{
-    if (_db.cur)
-    {
-        printf("Cursor already open\n");
-        return false;
-    }
-
-    int rc;
-    if ((rc = mdb_cursor_open(_db.txn, _db.dbi, &_db.cur)))
-    {
-        printf("Failed to open cursor: %d\n", rc);
-        return false;
-    }
-
-    return true;
-}
-
-bool dbcurcheck()
-{
-    if (!_db.cur)
-    {
-        printf("No open cursor\n");
-        return false;
-    }
-
-    return true;
-}
-
-bool dbcurclose()
-{
-    if (!dbcurcheck())
-        return false;
-
-    mdb_cursor_close(_db.cur);
-    _db.cur = NULL;
-
-    return true;
-}
-
-bool dbput(char *key, char *data)
-{
-    if (!dbtxncheck())
-        return false;
-    
-    MDB_val dbkey = {strlen(key) + 1, key};
-    MDB_val dbdata = {strlen(data) + 1, data};
-
-    int rc;
-    if ((rc = mdb_put(_db.txn, _db.dbi, &dbkey, &dbdata, MDB_NODUPDATA)))
-    {
-        if (rc != MDB_KEYEXIST)
-        {
-            printf("Failed to write data: %d\n", rc);
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool dbdel(char *key, char *data)
-{
-    if (!dbtxncheck())
-        return false;
-
-    MDB_val dbkey = {strlen(key) + 1, key};
-    MDB_val dbdata;
-    if (data)
-    {
-        dbdata.mv_size = strlen(data) + 1;
-        dbdata.mv_data = data;
-    }
-
-    int rc;
-    if ((rc = mdb_del(_db.txn, _db.dbi, &dbkey, data ? &dbdata : NULL)))
-    {
-        if (rc != MDB_NOTFOUND)
-        {
-            printf("Failed to delete data: %d\n", rc);
-            return false;
-        }
-    }
-
-    return true;
 }
 
 void writeraw(struct Portal *portal, char *s, int sendlen)
@@ -374,11 +221,11 @@ void runcmd_bproc(char *path)
 
 void runcmd_dbget(struct Portal *portal, char *cmdkey, char *key)
 {
-    if (dbtxnopen(true))
+    if (!dbtxnopen(&_db, 1))
     {
         int rc;
 
-        if (dbcuropen())
+        if (!dbcuropen(&_db))
         {
             MDB_val dbkey = {strlen(key) + 1, key};
             MDB_val dbdata;
@@ -403,20 +250,20 @@ void runcmd_dbget(struct Portal *portal, char *cmdkey, char *key)
 
             writeeom(portal);
 
-            dbcurclose();
+            dbcurclose(&_db);
         }
 
-        dbtxnclose();
+        dbtxnclose(&_db);
     }
 }
 
 void runcmd_dbchk(struct Portal *portal, char *cmdkey, char *key, char *data)
 {
-    if (dbtxnopen(true))
+    if (!dbtxnopen(&_db, 1))
     {
         int rc;
 
-        if (dbcuropen())
+        if (!dbcuropen(&_db))
         {
             MDB_val dbkey = {strlen(key) + 1, key};
             MDB_val dbdata = {strlen(data) + 1, data};
@@ -434,30 +281,30 @@ void runcmd_dbchk(struct Portal *portal, char *cmdkey, char *key, char *data)
 
             writeeom(portal);
 
-            dbcurclose();
+            dbcurclose(&_db);
         }
 
-        dbtxnclose();
+        dbtxnclose(&_db);
     }
 }
 
 void runcmd_dbput(struct Portal *portal, char *cmdkey, char *key, char *value)
 {
-    if (dbtxnopen(false))
+    if (!dbtxnopen(&_db, 0))
     {
-        dbput(key, value);
+        dbput(&_db, key, value);
 
-        dbtxnclose();
+        dbtxnclose(&_db);
     }
 }
 
 void runcmd_dbdel(struct Portal *portal, char *cmdkey, char *key, char *value)
 {
-    if (dbtxnopen(false))
+    if (!dbtxnopen(&_db, 0))
     {
-        dbdel(key, value);
+        dbdel(&_db, key, value);
 
-        dbtxnclose();
+        dbtxnclose(&_db);
     }    
 }
 
@@ -624,7 +471,7 @@ void readcore(struct Portal *portal, struct Notify *notify)
     fclose(file);
 }
 
-bool portalinit(struct Portal *portal, char *portalpath)
+int portalinit(struct Portal *portal, char *portalpath)
 {
     portal->fd = 0;
     portal->cmdstackpos = 0;
@@ -634,19 +481,19 @@ bool portalinit(struct Portal *portal, char *portalpath)
     if ((portal->fd = open(portalpath, O_RDWR | O_NOCTTY | O_SYNC | O_NONBLOCK)) < 0) 
     {
         printf("Error opening %s: %s\n", portalpath, strerror(errno));
-        return false;
+        return -1;
     }
 
-    if (!setinterface(portal, B115200))
+    if (setinterface(portal, B115200))
     {
         printf("Failed to configure portal\n");
-        return false;
+        return -1;
     }
 
-    return true;
+    return 0;
 }
 
-bool portalframe(struct Portal *portal)
+int portalframe(struct Portal *portal)
 {
     int readlen = read(portal->fd, portal->readbuf + portal->readpos, BUFFER_SIZE - portal->readpos - 1);
     if (readlen > 0)
@@ -693,15 +540,15 @@ bool portalframe(struct Portal *portal)
     else if (readlen < 0)
     {
         printf("Error from read: %d: %s\n", readlen, strerror(errno));
-        return false;
+        return -1;
     }
     else // readlen == 0
     {  
         printf("Timeout from read\n");
-        return false;
+        return -1;
     }
 
-    return true;
+    return 0;
 }
 
 void portalclose(struct Portal *portal)
@@ -715,7 +562,7 @@ void portalclose(struct Portal *portal)
         close(portal->fd);
 }
 
-bool notifyinit(struct Notify *notify, struct Portal *portal)
+int notifyinit(struct Notify *notify, struct Portal *portal)
 {
     notify->id = 0;
     notify->readbuf = malloc(EVENT_BUFFER_SIZE);
@@ -726,7 +573,7 @@ bool notifyinit(struct Notify *notify, struct Portal *portal)
     if ((notify->id = inotify_init()) < 0)
     {
         printf("Failed to initialize inotify");
-        return false;
+        return -1;
     }
 
     int flags = fcntl(notify->id, F_GETFL, 0);
@@ -735,13 +582,13 @@ bool notifyinit(struct Notify *notify, struct Portal *portal)
     if ((notify->watchcore = inotify_add_watch(notify->id, "/tmp/CORENAME", IN_MODIFY)) < 0)
     {
         printf("Failed to watch /tmp/CORENAME");
-        return false;
+        return -1;
     }
 
-    return true;
+    return 0;
 }
 
-bool notifyframe(struct Notify *notify)
+int notifyframe(struct Notify *notify)
 {
     int readlen = read(notify->id, notify->readbuf, EVENT_BUFFER_SIZE);
     if (readlen > 0)
@@ -774,15 +621,15 @@ bool notifyframe(struct Notify *notify)
     else if (readlen < 0)
     {
         printf("Error from notify read: %d: %s\n", readlen, strerror(errno));
-        return false;
+        return -1;
     }
     else // readlen == 0
     {  
         printf("Timeout from notify read\n");
-        return false;
+        return -1;
     }
 
-    return true;
+    return 0;
 }
 
 void notifyclose(struct Notify *notify)
@@ -804,7 +651,7 @@ void notifyclose(struct Notify *notify)
 void process(char *portalpath)
 {
     struct Portal portal;
-    if (portalinit(&portal, portalpath))
+    if (!portalinit(&portal, portalpath))
     {
         struct Notify notify;
         if (notifyinit(&notify, &portal))
@@ -815,10 +662,10 @@ void process(char *portalpath)
 
             while (!_terminated)
             {
-                if (!portalframe(&portal))
+                if (portalframe(&portal))
                     break;
 
-                if (!notifyframe(&notify))
+                if (notifyframe(&notify))
                     break;
                 
                 msleep(100);
@@ -863,77 +710,21 @@ void setupsignals()
 	signal(SIGHUP,  signalhandler);	
 }
 
-bool initialize()
+int initialize()
 {
-    int rc;
-
-	_terminated = false;
+	_terminated = 0;
     _core = "";
     _rom = "";
 
-    char selfpath[BUFFER_SIZE];
-    readlink("/proc/self/exe", selfpath, BUFFER_SIZE);
+    if (dbopen(&_db))
+        return -1;
 
-    char *lastslash;
-    if ((lastslash = strrchr(selfpath, '/')) == NULL)
-    {
-        printf("Failed to find program path");
-        return false;
-    }
-    *lastslash = 0;
+    // char mbcpath[BUFFER_SIZE];
+    // sprintf(mbcpath, "%s/mbc", selfpath);
+    // _mbcpath = malloc(strlen(mbcpath) + 1);
+    // strcpy(_mbcpath, mbcpath);
 
-    printf("Program directory: %s\n", selfpath);
-
-    char dbpath[BUFFER_SIZE];
-    sprintf(dbpath, "%s/data", selfpath);
-
-    printf("Database path: %s\n", dbpath);
-
-    char mbcpath[BUFFER_SIZE];
-    sprintf(mbcpath, "%s/mbc", selfpath);
-    _mbcpath = malloc(strlen(mbcpath) + 1);
-    strcpy(_mbcpath, mbcpath);
-
-    printf("Batch application path: %s\n", _mbcpath);
-
-    struct stat st = {0};
-    if (stat(dbpath, &st) == -1)
-    {
-        if ((rc = mkdir(dbpath, 0775)))
-        {
-            printf("Failed to create database directory\n");
-            return false;
-        }
-    }
-
-    if ((rc = mdb_env_create(&_db.env)))
-    {
-        printf("Failed to create database environment: %d\n", rc);
-        return false;
-    }
-
-    // Use default configuration for now
-    //mdb_env_set_maxdbs(_db.env, 5);
-    //mdb_env_set_mapsize(_db.env, (size_t)1048576 * (size_t)50); // 1MB * 50
-
-    if ((rc = mdb_env_open(_db.env, dbpath, 0, 0664)))
-    {
-        printf("Failed to open database environment: %d\n", rc);
-        return false;
-    }
-
-    if (dbtxnopen(false))
-    {
-        if ((rc = mdb_dbi_open(_db.txn, NULL, MDB_DUPSORT | MDB_CREATE, &_db.dbi)))
-        {
-            printf("Failed to open database: %d\n", rc);
-            return false;
-        }
-
-        dbtxnclose();
-    }
-
-	return true;
+    return 0;
 }
 
 void cleanup()
@@ -946,27 +737,29 @@ int main(int argc, char *argv[])
 {
     char *portalpath = (argc > 1) ? argv[1] : "/dev/ttyACM2";
 
-	if (!initialize())
+    printf("Starting up...\n");
+
+	if (initialize())
 		return 1;
 
-    if (dbtxnopen(false))
+    if (!dbtxnopen(&_db, 0))
     {
-        dbput("TESTING", "ONE");
-        dbput("TESTING", "TWO");
-        dbput("TESTING", "THREE");
-        dbput("TESTING", "FOUR");
-        dbput("TESTING", "FIVE");
-        dbput("TESTING", "SIX");
-        dbdel("TESTING", "THREE");
+        dbput(&_db, "TESTING", "ONE");
+        dbput(&_db, "TESTING", "TWO");
+        dbput(&_db, "TESTING", "THREE");
+        dbput(&_db, "TESTING", "FOUR");
+        dbput(&_db, "TESTING", "FIVE");
+        dbput(&_db, "TESTING", "SIX");
+        dbdel(&_db, "TESTING", "THREE");
 
-        dbtxnclose();
+        dbtxnclose(&_db);
     }
 
-    if (dbtxnopen(true))
+    if (!dbtxnopen(&_db, 1))
     {
         int rc;
 
-        if (dbcuropen())
+        if (!dbcuropen(&_db))
         {
             char *key = "TESTING";
             MDB_val dbkey = {strlen(key) + 1, key};
@@ -986,10 +779,10 @@ int main(int argc, char *argv[])
                 while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
             }
 
-            dbcurclose();
+            dbcurclose(&_db);
         }
 
-        dbtxnclose();
+        dbtxnclose(&_db);
     }
 
 	setupsignals();
