@@ -14,6 +14,7 @@
 #include <paths.h>
 #include <termios.h>
 #include <db.h>
+#include <path.h>
 
 #define GAMES_PATH "/media/fat/games"
 #define BUFFER_SIZE 4096
@@ -40,10 +41,10 @@ struct Notify
 };
 
 static volatile int _terminated;
-char *_mbcpath;
-char *_core;
-char *_rom;
-struct Database _db;
+static char *_mbcpath;
+static char *_core;
+static char *_rom;
+static struct Database _db;
 
 void shutdown()
 {
