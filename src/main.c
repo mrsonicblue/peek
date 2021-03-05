@@ -655,11 +655,16 @@ void process(char *portalpath)
     if (!portalinit(&portal, portalpath))
     {
         struct Notify notify;
-        if (notifyinit(&notify, &portal))
+        if (!notifyinit(&notify, &portal))
         {
             // Force read of core
             _core = "";
             readcore(&portal, &notify);
+
+            // Force send rom
+            writestr(&portal, "rom");
+            writestr(&portal, _rom);
+            writeeom(&portal);
 
             while (!_terminated)
             {
