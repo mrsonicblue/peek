@@ -734,57 +734,14 @@ void cleanup()
     mdb_env_close(_db.env);
 }
 
-int main(int argc, char *argv[])
+int main_service(int argc, char *argv[])
 {
-    char *portalpath = (argc > 1) ? argv[1] : "/dev/ttyACM2";
+    printf("Starting service...\n");
 
-    printf("Starting up...\n");
+    char *portalpath = (argc > 2) ? argv[2] : "/dev/ttyACM2";
 
 	if (initialize())
 		return 1;
-
-    if (!dbtxnopen(&_db, 0))
-    {
-        dbput(&_db, "TESTING", "ONE");
-        dbput(&_db, "TESTING", "TWO");
-        dbput(&_db, "TESTING", "THREE");
-        dbput(&_db, "TESTING", "FOUR");
-        dbput(&_db, "TESTING", "FIVE");
-        dbput(&_db, "TESTING", "SIX");
-        dbdel(&_db, "TESTING", "THREE");
-
-        dbtxnclose(&_db);
-    }
-
-    if (!dbtxnopen(&_db, 1))
-    {
-        int rc;
-
-        if (!dbcuropen(&_db))
-        {
-            char *key = "TESTING";
-            MDB_val dbkey = {strlen(key) + 1, key};
-            MDB_val dbdata;
-
-            if ((rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE)))
-            {
-                printf("No data found: %d\n", rc);
-            }
-            else
-            {
-                printf("Data found!\n");
-                do
-                {
-                    printf("Data: %s\n", (char *)dbdata.mv_data);
-                }
-                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
-            }
-
-            dbcurclose(&_db);
-        }
-
-        dbtxnclose(&_db);
-    }
 
 	setupsignals();
 
@@ -813,4 +770,148 @@ int main(int argc, char *argv[])
 	printf("All done!\n");
 
 	return 0;
+}
+
+int main_db_get(int argc, char *argv[])
+{
+    char *key = (argc > 3) ? argv[3] : (char *)NULL;
+
+    if (!dbtxnopen(&_db, 1))
+    {
+        int rc;
+        if (!dbcuropen(&_db))
+        {
+            MDB_val dbkey;
+            MDB_val dbdata;
+            MDB_cursor_op op;
+
+            if (key)
+            {
+                dbkey.mv_size = strlen(key) + 1;
+                dbkey.mv_data = key;
+                rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE);
+                op = MDB_NEXT_DUP;
+            }
+            else
+            {
+                rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_FIRST);
+                op = MDB_NEXT;
+            }
+
+            if (rc)
+            {
+                printf("No data found: %d\n", rc);
+            }
+            else
+            {
+                printf("Data found!\n");
+                do
+                {
+                    printf("Data: %s --- %s\n", (char *)dbkey.mv_data, (char *)dbdata.mv_data);
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, op)));
+            }
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+
+    return 0;
+}
+
+int main_db_put(int argc, char *argv[])
+{
+    if (argc < 5)
+    {
+        printf("Put command requires key and value\n");
+        return 1;
+    }
+
+    char *key = argv[3];
+    char *value = argv[4];
+
+    printf("Putting: %s --- %s\n", key, value);
+
+    if (!dbtxnopen(&_db, 0))
+    {
+        dbput(&_db, key, value);
+        dbtxnclose(&_db);
+    }
+
+    return 0;
+}
+
+int main_db_del(int argc, char *argv[])
+{
+    if (argc < 4)
+    {
+        printf("Delete command requires key\n");
+        return 1;
+    }
+
+    char *key = argv[3];
+    char *value = (argc > 4) ? argv[4] : (char *)NULL;
+
+    printf("Deleting: %s --- %s\n", key, value);
+
+    if (!dbtxnopen(&_db, 0))
+    {
+        dbdel(&_db, key, value);
+        dbtxnclose(&_db);
+    }
+
+    return 0;
+}
+
+int main_db(int argc, char *argv[])
+{
+    printf("Running database command...\n");
+
+    if (dbopen(&_db))
+        return -1;
+    
+    char *cmd = (argc > 2) ? argv[2] : "get";
+
+    int res;
+    if (strcmp(cmd, "get") == 0)
+    {
+        res = main_db_get(argc, argv);
+    }
+    else if (strcmp(cmd, "put") == 0)
+    {
+        res = main_db_put(argc, argv);
+    }
+    else if (strcmp(cmd, "del") == 0)
+    {
+        res = main_db_del(argc, argv);
+    }
+    else
+    {
+        printf("Unknown database command: %s\n", cmd);
+        res = 1;
+    }
+
+    mdb_dbi_close(_db.env, _db.dbi);
+    mdb_env_close(_db.env);
+
+    return res;
+}
+
+int main(int argc, char *argv[])
+{
+    char *cmd = (argc > 1) ? argv[1] : "service";
+
+    if (strcmp(cmd, "service") == 0)
+    {
+        return main_service(argc, argv);
+    }
+    else if (strcmp(cmd, "db") == 0)
+    {
+        return main_db(argc, argv);
+    }
+
+    printf("Unknown command: %s\n", cmd);
+    return 1;
 }
