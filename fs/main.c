@@ -68,21 +68,16 @@ static int peek_isfile(struct PathInfo *info)
 {
     switch (info->cmd)
     {
-        case PEEKCMD_ROOT:
         case PEEKCMD_FAV:
         case PEEKCMD_RECENT:
-        case PEEKCMD_YEAR:
-        case PEEKCMD_GENRE:
-            break;
+            return (info->stacklen == 2) ? 1 : 0;
         
         case PEEKCMD_ALPHA:
-            switch (info->stacklen)
-            {
-                case 3:
-                    return 1;
-            }
-            break;
+        case PEEKCMD_YEAR:
+        case PEEKCMD_GENRE:
+            return (info->stacklen == 3) ? 1 : 0;
 
+        case PEEKCMD_ROOT:
         case PEEKCMD_NONE:
             break;
     }
@@ -220,6 +215,54 @@ static void peek_readdir_root(struct PathInfo *info, void *buf, fuse_fill_dir_t 
     peek_fakefill(buf, __genrepath, filler);
 }
 
+static void peek_readdir_fav(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+{
+    (void) info;
+
+    DIR *dp;
+	if ((dp = opendir(_srcpath)) == NULL)
+		return;
+    
+    int fd = dirfd(dp);
+
+    if (!dbtxnopen(&_db, 1))
+    {
+        int rc;
+        if (!dbcuropen(&_db))
+        {
+            char key[BUFFER_SIZE];
+            sprintf(key, "fav/%s", _corename);
+
+            MDB_val dbkey = {strlen(key) + 1, key};
+            MDB_val dbdata;
+            struct stat st;
+
+            if (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE)))
+            {
+                do
+                {
+                    char *filename = (char *)dbdata.mv_data;
+                    if (!fstatat(fd, filename, &st, 0))
+                    {
+                        if (S_ISREG(st.st_mode))
+                        {
+                            if (filler(buf, filename, &st, 0))
+                                break;
+                        }
+                    }
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT_DUP)));
+            }
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+
+    closedir(dp);
+}
+
 static void peek_readdir_alpha1(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
 {
     (void) info;
@@ -304,7 +347,11 @@ static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         case PEEKCMD_ROOT:
             peek_readdir_root(&info, buf, filler);
             break;
-        
+
+        case PEEKCMD_FAV:
+            peek_readdir_fav(&info, buf, filler);
+            break;
+
         case PEEKCMD_ALPHA:
             switch (info.stacklen)
             {
@@ -319,7 +366,6 @@ static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
             break;
 
         case PEEKCMD_NONE:
-        case PEEKCMD_FAV:
         case PEEKCMD_RECENT:
         case PEEKCMD_YEAR:
         case PEEKCMD_GENRE:
