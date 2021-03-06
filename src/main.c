@@ -870,6 +870,111 @@ int main_db_del(int argc, char *argv[])
     return 0;
 }
 
+int main_db_pre(int argc, char *argv[])
+{
+    if (argc < 4)
+    {
+        printf("Prefix command requires prefix\n");
+        return 1;
+    }
+
+    char *prefix = argv[3];
+    size_t prefixlen = strlen(prefix);
+
+    if (!dbtxnopen(&_db, 1))
+    {
+        int rc;
+        if (!dbcuropen(&_db))
+        {
+            MDB_val dbkey = {prefixlen + 1, prefix};
+            MDB_val dbdata;
+
+            rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE);
+            if (rc)
+            {
+                printf("No data found: %d\n", rc);
+            }
+            else
+            {
+                printf("Data found!\n");
+                do
+                {
+                    if (prefixlen > dbkey.mv_size || memcmp(prefix, dbkey.mv_data, prefixlen) != 0)
+                        break;
+
+                    printf("Data: %s --- %s\n", (char *)dbkey.mv_data, (char *)dbdata.mv_data);
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
+            }
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+
+    return 0;
+}
+
+int main_db_sli(int argc, char *argv[])
+{
+    if (argc < 4)
+    {
+        printf("Slice command requires prefix\n");
+        return 1;
+    }
+
+    char *prefix = argv[3];
+    size_t prefixlen = strlen(prefix);
+    char slice[BUFFER_SIZE];
+    size_t slicelen = 0;
+
+    if (!dbtxnopen(&_db, 1))
+    {
+        int rc;
+        if (!dbcuropen(&_db))
+        {
+            MDB_val dbkey = {prefixlen + 1, prefix};
+            MDB_val dbdata;
+
+            rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE);
+            if (rc)
+            {
+                printf("No data found: %d\n", rc);
+            }
+            else
+            {
+                printf("Data found!\n");
+                do
+                {
+                    if (prefixlen > dbkey.mv_size || memcmp(prefix, dbkey.mv_data, prefixlen) != 0)
+                        break;
+                    
+                    char *curstart = (char *)dbkey.mv_data + prefixlen;
+                    char *curend = strchr(curstart, '/');
+                    size_t curlen = curend ? (size_t)(curend - curstart) : (dbkey.mv_size - 1 - prefixlen);
+
+                    if (slicelen != curlen || memcmp(slice, curstart, slicelen) != 0)
+                    {
+                        memcpy(slice, curstart, curlen);
+                        slice[curlen] = '\0';
+                        slicelen = curlen;
+
+                        printf("%s\n", slice);
+                    }
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
+            }
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+
+    return 0;
+}
+
 int main_db(int argc, char *argv[])
 {
     printf("Running database command...\n");
@@ -891,6 +996,14 @@ int main_db(int argc, char *argv[])
     else if (strcmp(cmd, "del") == 0)
     {
         res = main_db_del(argc, argv);
+    }
+    else if (strcmp(cmd, "pre") == 0)
+    {
+        res = main_db_pre(argc, argv);
+    }
+    else if (strcmp(cmd, "sli") == 0)
+    {
+        res = main_db_sli(argc, argv);
     }
     else
     {
