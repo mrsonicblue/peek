@@ -23,13 +23,11 @@
 
 enum peekcmd
 {
-    PEEKCMD_NONE = -1,
     PEEKCMD_ROOT,
     PEEKCMD_FAV,
     PEEKCMD_RECENT,
     PEEKCMD_ALPHA,
-    PEEKCMD_YEAR,
-    PEEKCMD_GENRE
+    PEEKCMD_HAS
 };
 
 struct PathInfo
@@ -44,8 +42,6 @@ struct PathInfo
 static const char *__favpath = "Favorites";
 static const char *__recentpath = "Recently Played";
 static const char *__alphapath = "A-Z";
-static const char *__yearpath = "Years";
-static const char *__genrepath = "Genres";
 
 static struct Database _db;
 static char *_mountpath;
@@ -73,12 +69,10 @@ static int peek_isfile(struct PathInfo *info)
             return (info->stacklen == 2) ? 1 : 0;
         
         case PEEKCMD_ALPHA:
-        case PEEKCMD_YEAR:
-        case PEEKCMD_GENRE:
+        case PEEKCMD_HAS:
             return (info->stacklen == 3) ? 1 : 0;
 
         case PEEKCMD_ROOT:
-        case PEEKCMD_NONE:
             break;
     }
 
@@ -113,7 +107,7 @@ static int peek_parsepath(struct PathInfo *info, const char *path)
     }
     info->stacklen = pos;
 
-    enum peekcmd cmd = PEEKCMD_NONE;
+    enum peekcmd cmd;
     if (info->stacklen == 0)
     {
         cmd = PEEKCMD_ROOT;
@@ -133,20 +127,10 @@ static int peek_parsepath(struct PathInfo *info, const char *path)
         {
             cmd = PEEKCMD_ALPHA;
         }
-        else if (strcmp(first, __yearpath) == 0)
+        else
         {
-            cmd = PEEKCMD_YEAR;
+            cmd = PEEKCMD_HAS;
         }
-        else if (strcmp(first, __genrepath) == 0)
-        {
-            cmd = PEEKCMD_GENRE;
-        }
-    }
-
-    if (cmd == PEEKCMD_NONE)
-    {
-        peek_parsepathrelease(info);
-        return -1;
     }
 
     info->cmd = cmd;
@@ -204,18 +188,7 @@ static void peek_fakefill(void *buf, const char *name, fuse_fill_dir_t filler)
     filler(buf, name, &st, 0);
 }
 
-static void peek_readdir_root(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
-{
-    (void) info;
-
-    peek_fakefill(buf, __favpath, filler);
-    peek_fakefill(buf, __recentpath, filler);
-    peek_fakefill(buf, __alphapath, filler);
-    peek_fakefill(buf, __yearpath, filler);
-    peek_fakefill(buf, __genrepath, filler);
-}
-
-static void peek_readdir_fav(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+static void peek_readdir_filekey(struct PathInfo *info, void *buf, fuse_fill_dir_t filler, char *filekey)
 {
     (void) info;
 
@@ -230,10 +203,7 @@ static void peek_readdir_fav(struct PathInfo *info, void *buf, fuse_fill_dir_t f
         int rc;
         if (!dbcuropen(&_db))
         {
-            char key[BUFFER_SIZE];
-            sprintf(key, "fav/%s", _corename);
-
-            MDB_val dbkey = {strlen(key) + 1, key};
+            MDB_val dbkey = {strlen(filekey) + 1, filekey};
             MDB_val dbdata;
             struct stat st;
 
@@ -261,6 +231,66 @@ static void peek_readdir_fav(struct PathInfo *info, void *buf, fuse_fill_dir_t f
     }
 
     closedir(dp);
+}
+
+static void peek_readdir_root(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+{
+    (void) info;
+
+    peek_fakefill(buf, __favpath, filler);
+    peek_fakefill(buf, __recentpath, filler);
+    peek_fakefill(buf, __alphapath, filler);
+
+    char prefix[BUFFER_SIZE];
+    sprintf(prefix, "has/%s/", _corename);
+    size_t prefixlen = strlen(prefix);
+    char slice[BUFFER_SIZE];
+    size_t slicelen = 0;
+
+    if (!dbtxnopen(&_db, 1))
+    {
+        int rc;
+        if (!dbcuropen(&_db))
+        {
+            MDB_val dbkey = {prefixlen + 1, prefix};
+            MDB_val dbdata;
+
+            if (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE)))
+            {
+                do
+                {
+                    if (prefixlen > dbkey.mv_size || memcmp(prefix, dbkey.mv_data, prefixlen) != 0)
+                        break;
+                    
+                    char *curstart = (char *)dbkey.mv_data + prefixlen;
+                    char *curend = strchr(curstart, '/');
+                    size_t curlen = curend ? (size_t)(curend - curstart) : (dbkey.mv_size - 1 - prefixlen);
+
+                    if (slicelen != curlen || memcmp(slice, curstart, slicelen) != 0)
+                    {
+                        memcpy(slice, curstart, curlen);
+                        slice[curlen] = '\0';
+                        slicelen = curlen;
+
+                        peek_fakefill(buf, slice, filler);
+                    }
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
+            }
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+}
+
+static void peek_readdir_fav(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+{
+    char filekey[BUFFER_SIZE];
+    sprintf(filekey, "fav/%s", _corename);
+
+    peek_readdir_filekey(info, buf, filler, filekey);
 }
 
 static void peek_readdir_alpha1(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
@@ -327,6 +357,62 @@ static void peek_readdir_alpha2(struct PathInfo *info, void *buf, fuse_fill_dir_
 	closedir(dp);
 }
 
+static void peek_readdir_has1(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+{
+    (void) info;
+
+    char prefix[BUFFER_SIZE];
+    sprintf(prefix, "has/%s/%s/", _corename, info->stack[0]);
+    size_t prefixlen = strlen(prefix);
+    char slice[BUFFER_SIZE];
+    size_t slicelen = 0;
+
+    if (!dbtxnopen(&_db, 1))
+    {
+        int rc;
+        if (!dbcuropen(&_db))
+        {
+            MDB_val dbkey = {prefixlen + 1, prefix};
+            MDB_val dbdata;
+
+            if (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE)))
+            {
+                do
+                {
+                    if (prefixlen > dbkey.mv_size || memcmp(prefix, dbkey.mv_data, prefixlen) != 0)
+                        break;
+
+                    char *curstart = (char *)dbkey.mv_data + prefixlen;
+                    char *curend = strchr(curstart, '/');
+                    size_t curlen = curend ? (size_t)(curend - curstart) : (dbkey.mv_size - 1 - prefixlen);
+
+                    if (slicelen != curlen || memcmp(slice, curstart, slicelen) != 0)
+                    {
+                        memcpy(slice, curstart, curlen);
+                        slice[curlen] = '\0';
+                        slicelen = curlen;
+
+                        peek_fakefill(buf, slice, filler);
+                    }
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
+            }
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+}
+
+static void peek_readdir_has2(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+{
+    char filekey[BUFFER_SIZE];
+    sprintf(filekey, "has/%s/%s/%s", _corename, info->stack[0], info->stack[1]);
+
+    peek_readdir_filekey(info, buf, filler, filekey);
+}
+
 static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
 {
@@ -365,10 +451,20 @@ static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
             }
             break;
 
-        case PEEKCMD_NONE:
         case PEEKCMD_RECENT:
-        case PEEKCMD_YEAR:
-        case PEEKCMD_GENRE:
+            break;
+
+        case PEEKCMD_HAS:
+            switch (info.stacklen)
+            {
+                case 1:
+                    peek_readdir_has1(&info, buf, filler);
+                    break;
+
+                case 2:
+                    peek_readdir_has2(&info, buf, filler);
+                    break;
+            }
             break;
     }
 
