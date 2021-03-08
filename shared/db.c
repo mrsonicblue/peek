@@ -44,8 +44,9 @@ int dbopen(struct Database *db)
         return -1;
     }
 
+    mdb_env_set_maxdbs(db->env, 5);
+
     // Use default configuration for now
-    //mdb_env_set_maxdbs(db->env, 5);
     //mdb_env_set_mapsize(db->env, (size_t)1048576 * (size_t)50); // 1MB * 50
 
     if ((rc = mdb_env_open(db->env, _dbpath, 0, 0664)))
@@ -56,9 +57,15 @@ int dbopen(struct Database *db)
 
     if (!dbtxnopen(db, 0))
     {
-        if ((rc = mdb_dbi_open(db->txn, NULL, MDB_DUPSORT | MDB_CREATE, &db->dbi)))
+        if ((rc = mdb_dbi_open(db->txn, "fil", MDB_DUPSORT | MDB_CREATE, &db->dbfil)))
         {
-            printf("Failed to open database: %d\n", rc);
+            printf("Failed to open filter database: %d\n", rc);
+            return -1;
+        }
+
+        if ((rc = mdb_dbi_open(db->txn, "fil", MDB_CREATE, &db->dbstr)))
+        {
+            printf("Failed to open string database: %d\n", rc);
             return -1;
         }
 
@@ -70,7 +77,8 @@ int dbopen(struct Database *db)
 
 void dbclose(struct Database *db)
 {
-    mdb_dbi_close(db->env, db->dbi);
+    mdb_dbi_close(db->env, db->dbfil);
+    mdb_dbi_close(db->env, db->dbstr);
     mdb_env_close(db->env);
 }
 
@@ -139,7 +147,7 @@ int dbcuropen(struct Database *db)
     }
 
     int rc;
-    if ((rc = mdb_cursor_open(db->txn, db->dbi, &db->cur)))
+    if ((rc = mdb_cursor_open(db->txn, db->dbfil, &db->cur)))
     {
         printf("Failed to open cursor: %d\n", rc);
         return -1;
@@ -179,7 +187,7 @@ int dbput(struct Database *db, char *key, char *data)
     MDB_val dbdata = {strlen(data) + 1, data};
 
     int rc;
-    if ((rc = mdb_put(db->txn, db->dbi, &dbkey, &dbdata, MDB_NODUPDATA)))
+    if ((rc = mdb_put(db->txn, db->dbfil, &dbkey, &dbdata, MDB_NODUPDATA)))
     {
         if (rc != MDB_KEYEXIST)
         {
@@ -205,7 +213,7 @@ int dbdel(struct Database *db, char *key, char *data)
     }
 
     int rc;
-    if ((rc = mdb_del(db->txn, db->dbi, &dbkey, data ? &dbdata : NULL)))
+    if ((rc = mdb_del(db->txn, db->dbfil, &dbkey, data ? &dbdata : NULL)))
     {
         if (rc != MDB_NOTFOUND)
         {
@@ -213,6 +221,35 @@ int dbdel(struct Database *db, char *key, char *data)
             return -1;
         }
     }
+
+    return 0;
+}
+
+int dbstrget(struct Database *db, char *str, unsigned int id)
+{
+    return 0;
+}
+
+int dbstrput(struct Database *db, char *str, unsigned int *id)
+{
+    // int rc;
+
+    // MDB_txn *txn;
+    // if ((rc = mdb_txn_begin(db->env, NULL, 0, &txn))) 
+    // {
+    //     printf("Failed to create transaction: %d\n", rc);
+    //     return -1;
+    // }
+
+    // MDB_cursor *cur;
+    // if ((rc = mdb_cursor_open(txn, db->dbstr, &cur)))
+    // {
+    //     printf("Failed to open cursor: %d\n", rc);
+    //     return -1;
+    // }
+
+    // MDB_val key = {sizeof(unsigned int), }
+    // rc = mdb_get(txn, db->dbstr, )
 
     return 0;
 }
