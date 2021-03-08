@@ -13,10 +13,12 @@
 #include <sys/wait.h>
 #include <paths.h>
 #include <termios.h>
+#include <time.h>
 #include <db.h>
 #include <path.h>
 
 #define GAMES_PATH "/media/fat/games"
+#define MAX_RECENTS 20
 #define BUFFER_SIZE 4096
 #define EOM 4
 #define EVENT_SIZE ( sizeof (struct inotify_event) )
@@ -81,6 +83,21 @@ int setinterface(struct Portal *portal, int speed)
     return 0;
 }
 
+void nowchar(char *str)
+{
+    time_t now = time(NULL);
+    now = now & 0xFFFFFFFF; // Normalize to 4 bytes
+    now = 0xFFFFFFFF - now; // Flip to count down
+    char *nowptr = (char *)&now;
+    int offset;
+    for (int i = 0; i < TIME_LEN; i += 2)
+    {
+        offset = sizeof(time_t) - (i / 2) - 1;
+        str[i] = 'a' + (nowptr[offset] >> 4);
+        str[i + 1] = 'a' + (nowptr[offset] & 0x0F);
+    }
+}
+
 char *rtrim(char *s)
 {
     char* back = s + strlen(s);
@@ -108,6 +125,51 @@ int msleep(long msec)
     } while (res && errno == EINTR);
 
     return res;
+}
+
+void updaterecents()
+{
+    if (strlen(_core) == 0 || strlen(_rom) == 0)
+        return;
+
+    char key[BUFFER_SIZE];
+    sprintf(key, "rec/%s", _core);
+
+    if (!dbtxnopen(&_db, 0))
+    {
+        int rc;
+        if (!dbcuropen(&_db))
+        {
+            MDB_val dbkey = {strlen(key) + 1, key};
+            MDB_val dbdata;
+            if (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET)))
+            {
+                int count = 1;
+                do
+                {
+                    if (count >= MAX_RECENTS || dbdata.mv_size < TIME_LEN + 1 || strcmp(_rom, dbdata.mv_data + TIME_LEN) == 0)
+                    {
+                        mdb_cursor_del(_db.cur, 0);
+                    }
+                    else
+                    {
+                        count++;
+                    }
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT_DUP)));
+            }
+
+            char *stamped = malloc(strlen(_rom) + 1 + TIME_LEN);
+            nowchar(stamped);
+            strcpy(stamped + TIME_LEN, _rom);
+            dbput(&_db, key, stamped);
+            free(stamped);
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
 }
 
 void writeraw(struct Portal *portal, char *s, int sendlen)
@@ -398,11 +460,15 @@ void readrom(struct Portal *portal, char *rom)
     if (strcmp(_rom, rom) == 0)
         return;
     
+    printf("ROM switched to: %s\n", rom);
+    
     if (strlen(_rom) > 0)
         free(_rom);
 
     _rom = malloc(strlen(rom) + 1);
     strcpy(_rom, rom);
+
+    updaterecents();
 
     writestr(portal, "rom");
     writestr(portal, _rom);
@@ -424,7 +490,7 @@ void readcore(struct Portal *portal, struct Notify *notify)
     {
         if (strcmp(_core, core) != 0)
         {
-            printf("Core: %s\n", core);
+            printf("Core switched to: %s\n", core);
 
             if (strlen(_core) > 0)
                 free(_core);
@@ -735,8 +801,7 @@ int initialize()
 
 void cleanup()
 {
-    mdb_dbi_close(_db.env, _db.dbi);
-    mdb_env_close(_db.env);
+    dbclose(&_db);
 }
 
 int main_service(int argc, char *argv[])
@@ -794,7 +859,7 @@ int main_db_get(int argc, char *argv[])
             {
                 dbkey.mv_size = strlen(key) + 1;
                 dbkey.mv_data = key;
-                rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE);
+                rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET);
                 op = MDB_NEXT_DUP;
             }
             else
@@ -815,6 +880,114 @@ int main_db_get(int argc, char *argv[])
                     printf("Data: %s --- %s\n", (char *)dbkey.mv_data, (char *)dbdata.mv_data);
                 }
                 while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, op)));
+            }
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+
+    return 0;
+}
+
+int main_db_pre(int argc, char *argv[], int delete)
+{
+    if (argc < 4)
+    {
+        printf("Get prefix command requires prefix\n");
+        return 1;
+    }
+
+    char *prefix = argv[3];
+    size_t prefixlen = strlen(prefix);
+
+    if (!dbtxnopen(&_db, delete ? 0 : 1))
+    {
+        int rc;
+        if (!dbcuropen(&_db))
+        {
+            MDB_val dbkey = {prefixlen + 1, prefix};
+            MDB_val dbdata;
+
+            rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE);
+            if (rc)
+            {
+                printf("No data found: %d\n", rc);
+            }
+            else
+            {
+                printf("Data found!\n");
+                do
+                {
+                    if (prefixlen > dbkey.mv_size || memcmp(prefix, dbkey.mv_data, prefixlen) != 0)
+                        break;
+
+                    printf("Data: %s --- %s\n", (char *)dbkey.mv_data, (char *)dbdata.mv_data);
+
+                    if (delete)
+                        mdb_cursor_del(_db.cur, 0);
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
+            }
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+
+    return 0;
+}
+
+int main_db_sli(int argc, char *argv[])
+{
+    if (argc < 4)
+    {
+        printf("Get slice command requires prefix\n");
+        return 1;
+    }
+
+    char *prefix = argv[3];
+    size_t prefixlen = strlen(prefix);
+    char slice[BUFFER_SIZE];
+    size_t slicelen = 0;
+
+    if (!dbtxnopen(&_db, 1))
+    {
+        int rc;
+        if (!dbcuropen(&_db))
+        {
+            MDB_val dbkey = {prefixlen + 1, prefix};
+            MDB_val dbdata;
+
+            rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE);
+            if (rc)
+            {
+                printf("No data found: %d\n", rc);
+            }
+            else
+            {
+                printf("Data found!\n");
+                do
+                {
+                    if (prefixlen > dbkey.mv_size || memcmp(prefix, dbkey.mv_data, prefixlen) != 0)
+                        break;
+                    
+                    char *curstart = (char *)dbkey.mv_data + prefixlen;
+                    char *curend = strchr(curstart, '/');
+                    size_t curlen = curend ? (size_t)(curend - curstart) : (dbkey.mv_size - 1 - prefixlen);
+
+                    if (slicelen != curlen || memcmp(slice, curstart, slicelen) != 0)
+                    {
+                        memcpy(slice, curstart, curlen);
+                        slice[curlen] = '\0';
+                        slicelen = curlen;
+
+                        printf("%s\n", slice);
+                    }
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
             }
 
             dbcurclose(&_db);
@@ -870,111 +1043,6 @@ int main_db_del(int argc, char *argv[])
     return 0;
 }
 
-int main_db_pre(int argc, char *argv[])
-{
-    if (argc < 4)
-    {
-        printf("Prefix command requires prefix\n");
-        return 1;
-    }
-
-    char *prefix = argv[3];
-    size_t prefixlen = strlen(prefix);
-
-    if (!dbtxnopen(&_db, 1))
-    {
-        int rc;
-        if (!dbcuropen(&_db))
-        {
-            MDB_val dbkey = {prefixlen + 1, prefix};
-            MDB_val dbdata;
-
-            rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE);
-            if (rc)
-            {
-                printf("No data found: %d\n", rc);
-            }
-            else
-            {
-                printf("Data found!\n");
-                do
-                {
-                    if (prefixlen > dbkey.mv_size || memcmp(prefix, dbkey.mv_data, prefixlen) != 0)
-                        break;
-
-                    printf("Data: %s --- %s\n", (char *)dbkey.mv_data, (char *)dbdata.mv_data);
-                }
-                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
-            }
-
-            dbcurclose(&_db);
-        }
-
-        dbtxnclose(&_db);
-    }
-
-    return 0;
-}
-
-int main_db_sli(int argc, char *argv[])
-{
-    if (argc < 4)
-    {
-        printf("Slice command requires prefix\n");
-        return 1;
-    }
-
-    char *prefix = argv[3];
-    size_t prefixlen = strlen(prefix);
-    char slice[BUFFER_SIZE];
-    size_t slicelen = 0;
-
-    if (!dbtxnopen(&_db, 1))
-    {
-        int rc;
-        if (!dbcuropen(&_db))
-        {
-            MDB_val dbkey = {prefixlen + 1, prefix};
-            MDB_val dbdata;
-
-            rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_SET_RANGE);
-            if (rc)
-            {
-                printf("No data found: %d\n", rc);
-            }
-            else
-            {
-                printf("Data found!\n");
-                do
-                {
-                    if (prefixlen > dbkey.mv_size || memcmp(prefix, dbkey.mv_data, prefixlen) != 0)
-                        break;
-                    
-                    char *curstart = (char *)dbkey.mv_data + prefixlen;
-                    char *curend = strchr(curstart, '/');
-                    size_t curlen = curend ? (size_t)(curend - curstart) : (dbkey.mv_size - 1 - prefixlen);
-
-                    if (slicelen != curlen || memcmp(slice, curstart, slicelen) != 0)
-                    {
-                        memcpy(slice, curstart, curlen);
-                        slice[curlen] = '\0';
-                        slicelen = curlen;
-
-                        printf("%s\n", slice);
-                    }
-                }
-                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT)));
-            }
-
-            dbcurclose(&_db);
-        }
-
-        dbtxnclose(&_db);
-    }
-
-    return 0;
-}
-
 int main_db(int argc, char *argv[])
 {
     printf("Running database command...\n");
@@ -989,6 +1057,14 @@ int main_db(int argc, char *argv[])
     {
         res = main_db_get(argc, argv);
     }
+    else if (strcmp(cmd, "getpre") == 0)
+    {
+        res = main_db_pre(argc, argv, 0);
+    }
+    else if (strcmp(cmd, "getsli") == 0)
+    {
+        res = main_db_sli(argc, argv);
+    }
     else if (strcmp(cmd, "put") == 0)
     {
         res = main_db_put(argc, argv);
@@ -997,13 +1073,9 @@ int main_db(int argc, char *argv[])
     {
         res = main_db_del(argc, argv);
     }
-    else if (strcmp(cmd, "pre") == 0)
+    else if (strcmp(cmd, "delpre") == 0)
     {
-        res = main_db_pre(argc, argv);
-    }
-    else if (strcmp(cmd, "sli") == 0)
-    {
-        res = main_db_sli(argc, argv);
+        res = main_db_pre(argc, argv, 1);
     }
     else
     {
@@ -1011,8 +1083,7 @@ int main_db(int argc, char *argv[])
         res = 1;
     }
 
-    mdb_dbi_close(_db.env, _db.dbi);
-    mdb_env_close(_db.env);
+    dbclose(&_db);
 
     return res;
 }
