@@ -104,3 +104,16 @@ char *pathfile(char *path)
 
     return result;
 }
+
+char *strtokplus(char *s, char c, char **r)
+{
+    char *p = s ? s : *r;
+    if (!*p)
+        return 0;
+    *r = strchr(p, c);
+    if (*r)
+        *(*r)++ = 0;
+    else
+        *r = p+strlen(p);
+    return p;
+}
