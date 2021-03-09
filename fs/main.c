@@ -94,11 +94,19 @@ static int peek_parsepath(struct PathInfo *info, const char *path)
 {
     memset(info, 0, sizeof(struct PathInfo));
 
+    char pathdup[BUFFER_SIZE];
+    strcpy(pathdup, path);
+
+    // Skip leading slash in path
+    char *pathbeg = pathdup;
+    if (*pathbeg == '/')
+        pathbeg++;
+
     char *r = NULL;
     char *t;
     char *tmp;
     int pos = 0;
-    for (t = strtok_r((char *)path, "/", &r); t != NULL; t = strtok_r(NULL, "/", &r))
+    for (t = strtokplus(pathbeg, '/', &r); t != NULL; t = strtokplus(NULL, '/', &r))
     {
         tmp = malloc(strlen(t) + 1);
         strcpy(tmp, t);

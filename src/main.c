@@ -1043,6 +1043,123 @@ int main_db_del(int argc, char *argv[])
     return 0;
 }
 
+void main_db_import_put(char *core, char *rom, char *has, char *value)
+{
+    if (strlen(value) == 0)
+        return;
+
+    char key[BUFFER_SIZE];
+
+    char *r = NULL;
+    char *bit;
+    for (bit = strtokplus(value, '|', &r); bit != NULL; bit = strtokplus(NULL, '|', &r))
+    {
+        if (strlen(bit) == 0)
+            continue;
+
+        printf(" - %s: %s\n", has, bit);
+
+        sprintf(key, "has/%s/%s/%s", core, has, bit);
+        dbput(&_db, key, rom);
+    }
+}
+
+int main_db_import(int argc, char *argv[])
+{
+    if (argc < 5)
+    {
+        printf("Import command requires core name and filename\n");
+        return 1;
+    }
+
+    char *core = argv[3];
+    char *filename = argv[4];
+
+    printf("Importing data for core: %s\n", core);
+    printf("Opening %s\n", filename);
+
+    FILE *file;
+    char line[BUFFER_SIZE];
+    char rom[BUFFER_SIZE];
+
+    if ((file = fopen(filename, "r")) == NULL) 
+    {
+        printf("Failed to open file\n");
+        return 1;
+    }
+
+    if (!dbtxnopen(&_db, 0))
+    {
+        char *r = NULL;
+        char *bit;
+        char *tmp;
+
+        char *header[100];
+        int headerlen = 0;
+
+        if (fgets(line, BUFFER_SIZE - 1, file) != NULL)
+        {
+            rtrim(line);
+
+            for (bit = strtokplus(line, '\t', &r); bit != NULL; bit = strtokplus(NULL, '\t', &r))
+            {
+                tmp = malloc(strlen(bit) + 1);
+                strcpy(tmp, bit);
+                
+                header[headerlen++] = tmp;
+
+                printf("Header: %s\n", tmp);
+            }
+        }
+        else
+        {
+            printf("Failed to read header\n");
+            return 1;
+        }
+
+        while (fgets(line, BUFFER_SIZE - 1, file) != NULL)
+        {
+            rtrim(line);
+
+            int pos = 0;
+            for (bit = strtokplus(line, '\t', &r); bit != NULL; bit = strtokplus(NULL, '\t', &r))
+            {
+                if (pos == 0)
+                {
+                    // We assume the first colume is the ROM
+                    strcpy(rom, bit);
+                    printf("%s\n", rom);
+                }
+                else
+                {
+                    main_db_import_put(core, rom, header[pos], bit);
+                }
+
+                pos++;
+            }
+        }
+
+        for (int i = 0; i < headerlen; i++)
+        {
+            free(header[i]);
+        }
+
+        dbtxnclose(&_db);
+    }
+
+    fclose(file);
+
+    // printf("Putting: %s --- %s\n", key, value);
+
+    // if (!dbtxnopen(&_db, 0))
+    // {
+    //     dbput(&_db, key, value);
+    //     dbtxnclose(&_db);
+    // }
+
+    return 0;
+}
+
 int main_db(int argc, char *argv[])
 {
     printf("Running database command...\n");
@@ -1076,6 +1193,10 @@ int main_db(int argc, char *argv[])
     else if (strcmp(cmd, "delpre") == 0)
     {
         res = main_db_pre(argc, argv, 1);
+    }
+    else if (strcmp(cmd, "import") == 0)
+    {
+        res = main_db_import(argc, argv);
     }
     else
     {
