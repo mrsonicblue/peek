@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <sys/inotify.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <paths.h>
@@ -47,7 +48,7 @@ struct Notify
 
 static volatile int _terminated;
 static char *_portalpath;
-static char *_mbcpath;
+static char *_peekfspath;
 static char *_core;
 static char *_rom;
 static char *_peekmountpath;
@@ -474,6 +475,8 @@ void peekunmount()
 
     printf("Unmounting: %s\n", _peekmountpath);
 
+    umount(_peekmountpath);
+
     free(_peekmountpath);
     _peekmountpath = (char *)NULL;
 }
@@ -482,10 +485,58 @@ void peekmount(char *romspath)
 {
     peekunmount();
 
-    _peekmountpath = malloc(strlen(romspath) + strlen(MOUNT_NAME) + 2);
-    sprintf(_peekmountpath, "%s/%s", romspath, MOUNT_NAME);
+    char *path = malloc(strlen(romspath) + strlen(MOUNT_NAME) + 2);
+    sprintf(path, "%s/%s", romspath, MOUNT_NAME);
 
-    printf("Mounting: %s\n", _peekmountpath);
+    struct stat s;
+    if (stat(path, &s) != 0 || !S_ISDIR(s.st_mode)) 
+    {
+        printf("Creating: %s\n", path);
+        if (mkdir(path, 0755) != 0)
+        {
+            printf("Failed to create directory\n");
+            free(path);
+            return;
+        }
+    }
+
+    printf("Mounting: %s\n", path);
+
+    char procbuf[BUFFER_SIZE];
+    sprintf(procbuf, "%s %s", _peekfspath, path);
+
+    int res;
+    FILE *proc;
+    if ((proc = popen(procbuf, "r")) == NULL)
+    {
+        printf("Failed to open mount process\n");
+        res = -1;
+    }
+    else
+    {
+        while (fgets(procbuf, BUFFER_SIZE, proc) != NULL)
+        {
+            // Don't care about the output
+        }
+
+        if (pclose(proc))
+        {
+            printf("Mount process exited with error status\n");
+            res = -1;
+        }
+        else
+        {
+            res = 0;
+        }
+    }
+
+    if (res != 0)
+    {
+        free(path);
+        return;
+    }
+
+    _peekmountpath = path;
 }
 
 void readrom(struct Portal *portal, char *rom)
@@ -727,6 +778,18 @@ void portalframe(struct Portal *portal)
     }
 }
 
+int checkrom(char *name)
+{
+    char path[BUFFER_SIZE];
+    sprintf(path, "%s/%s/%s", GAMES_PATH, _core, name);
+
+    struct stat s;
+    if (stat(path, &s) != 0 || !S_ISREG(s.st_mode))
+        return -1;
+    
+    return 0;
+}
+
 void notifyinit(struct Notify *notify, struct Portal *portal)
 {
     notify->id = 0;
@@ -827,7 +890,7 @@ void notifyframe(struct Notify *notify)
             }
             else if (notify->watchroms && event->wd == notify->watchroms)
             {
-                if (event->len > 0)
+                if (event->len > 0 && !checkrom(event->name))
                 {
                     printf("Game opened: %s\n", event->name);
                     readrom(notify->portal, event->name);
@@ -921,10 +984,7 @@ int initialize()
     if (dbopen(&_db))
         return -1;
 
-    // char mbcpath[BUFFER_SIZE];
-    // sprintf(mbcpath, "%s/mbc", selfpath);
-    // _mbcpath = malloc(strlen(mbcpath) + 1);
-    // strcpy(_mbcpath, mbcpath);
+    _peekfspath = pathmake("peekfs");
 
     return 0;
 }
