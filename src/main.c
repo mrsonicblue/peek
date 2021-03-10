@@ -18,6 +18,7 @@
 #include <path.h>
 
 #define GAMES_PATH "/media/fat/games"
+#define MOUNT_NAME "Peek"
 #define MAX_RECENTS 20
 #define BUFFER_SIZE 4096
 #define EOM 4
@@ -31,6 +32,7 @@ struct Portal
     int cmdstackpos;
     char *readbuf;
     int readpos;
+    int retry;
 };
 
 struct Notify
@@ -40,12 +42,15 @@ struct Notify
     int watchroms;
     char *readbuf;
     struct Portal *portal;
+    int retry;
 };
 
 static volatile int _terminated;
+static char *_portalpath;
 static char *_mbcpath;
 static char *_core;
 static char *_rom;
+static char *_peekmountpath;
 static struct Database _db;
 
 void shutdown()
@@ -56,11 +61,11 @@ void shutdown()
 	_terminated = 1;
 }
 
-int setinterface(struct Portal *portal, int speed)
+int setinterface(int fd, int speed)
 {
     struct termios tty;
 
-    if (tcgetattr(portal->fd, &tty) < 0)
+    if (tcgetattr(fd, &tty) < 0)
     {
         printf("Error from tcgetattr: %s\n", strerror(errno));
         return -1;
@@ -74,7 +79,7 @@ int setinterface(struct Portal *portal, int speed)
     tty.c_cc[VMIN] = 0;
     tty.c_cc[VTIME] = 1;
 
-    if (tcsetattr(portal->fd, TCSANOW, &tty) != 0)
+    if (tcsetattr(fd, TCSANOW, &tty) != 0)
     {
         printf("Error from tcsetattr: %s\n", strerror(errno));
         return -1;
@@ -172,34 +177,40 @@ void updaterecents()
     }
 }
 
-void writeraw(struct Portal *portal, char *s, int sendlen)
+int writeraw(struct Portal *portal, char *s, int sendlen)
 {
+    if (!portal->fd)
+        return -1;
+    
     int writelen = write(portal->fd, s, sendlen);
     if (writelen != sendlen)
     {
         printf("Error from write: %d, %d\n", writelen, errno);
     }
     tcdrain(portal->fd); // wait for write
+
+    return 0;
 }
 
 void writestr(struct Portal *portal, char *s)
 {
     int sendlen = strlen(s) + 1;
-    writeraw(portal, s, sendlen);
+    if (!writeraw(portal, s, sendlen))
+        printf("Sent: %s\n", s);
 }
 
 void writeeol(struct Portal *portal)
 {
     char s[] = {0x00};
-    printf("Sending EOL\n");
-    writeraw(portal, s, 1);
+    if (!writeraw(portal, s, 1))
+        printf("Sent EOL\n");
 }
 
 void writeeom(struct Portal *portal)
 {
     char s[] = {EOM};    
-    printf("Sending EOM\n");
-    writeraw(portal, s, 1);
+    if (!writeraw(portal, s, 1))
+        printf("Sent EOM\n");
 }
 
 void runcmd_proc(struct Portal *portal, char *cmdkey, char *path)
@@ -221,7 +232,8 @@ void runcmd_proc(struct Portal *portal, char *cmdkey, char *path)
         {
             // rtrim(procbuf);
             int len = strlen(procbuf);
-            writeraw(portal, procbuf, len);
+            if (!writeraw(portal, procbuf, len))
+                printf("Sending %d bytes\n", len);
         }
 
         writeeol(portal);
@@ -455,6 +467,27 @@ void runcmd(struct Portal *portal)
     }
 }
 
+void peekunmount()
+{
+    if (!_peekmountpath)
+        return;
+
+    printf("Unmounting: %s\n", _peekmountpath);
+
+    free(_peekmountpath);
+    _peekmountpath = (char *)NULL;
+}
+
+void peekmount(char *romspath)
+{
+    peekunmount();
+
+    _peekmountpath = malloc(strlen(romspath) + strlen(MOUNT_NAME) + 2);
+    sprintf(_peekmountpath, "%s/%s", romspath, MOUNT_NAME);
+
+    printf("Mounting: %s\n", _peekmountpath);
+}
+
 void readrom(struct Portal *portal, char *rom)
 {
     if (strcmp(_rom, rom) == 0)
@@ -475,7 +508,7 @@ void readrom(struct Portal *portal, char *rom)
     writeeom(portal);
 }
 
-void readcore(struct Portal *portal, struct Notify *notify)
+void readcore(struct Notify *notify)
 {
     FILE *file;
     char core[BUFFER_SIZE];
@@ -494,40 +527,49 @@ void readcore(struct Portal *portal, struct Notify *notify)
 
             if (strlen(_core) > 0)
                 free(_core);
+            
+            peekunmount();
 
             _core = malloc(strlen(core) + 1);
             strcpy(_core, core);
 
-            if (notify->watchroms > 0)
+            if (notify->watchroms)
             {
                 inotify_rm_watch(notify->id, notify->watchroms);
                 notify->watchroms = 0;
             }
 
-            char gamespath[BUFFER_SIZE];
-            sprintf(gamespath, "%s/%s", GAMES_PATH, core);
-            printf("ROM path: %s\n", gamespath);
+            char romspath[BUFFER_SIZE];
+            sprintf(romspath, "%s/%s", GAMES_PATH, core);
+            printf("ROMs path: %s\n", romspath);
 
-            DIR *gamesdir;
-            if ((gamesdir = opendir(gamespath)) != NULL) 
+            DIR *romsdir;
+            if ((romsdir = opendir(romspath)) != NULL) 
             {
-                closedir(gamesdir);
+                closedir(romsdir);
 
-                if ((notify->watchroms = inotify_add_watch(notify->id, gamespath, IN_OPEN)) < 0)
+                int watchroms;
+                if ((watchroms = inotify_add_watch(notify->id, romspath, IN_OPEN)) < 0)
                 {
-                    printf("Failed to watch ROM path\n");
+                    printf("Failed to watch ROM path: %s\n", romspath);
                 }
+                else
+                {
+                    notify->watchroms = watchroms;
+                }
+
+                peekmount(romspath);
             }
             else
             {
                 printf("ROM path does not exist\n");
             }
 
-            writestr(portal, "core");
-            writestr(portal, _core);
-            writeeom(portal);
+            writestr(notify->portal, "core");
+            writestr(notify->portal, _core);
+            writeeom(notify->portal);
 
-            readrom(portal, "");
+            readrom(notify->portal, "");
         }
     }
     else 
@@ -538,30 +580,90 @@ void readcore(struct Portal *portal, struct Notify *notify)
     fclose(file);
 }
 
-int portalinit(struct Portal *portal, char *portalpath)
+void portalinit(struct Portal *portal)
 {
     portal->fd = 0;
     portal->cmdstackpos = 0;
-    portal->readbuf = malloc(BUFFER_SIZE);
+    portal->readbuf = NULL;
     portal->readpos = 0;
+    portal->retry = 0;
+}
 
-    if ((portal->fd = open(portalpath, O_RDWR | O_NOCTTY | O_SYNC | O_NONBLOCK)) < 0) 
+int portalopen(struct Portal *portal)
+{
+    int fd;
+    if ((fd = open(_portalpath, O_RDWR | O_NOCTTY | O_SYNC | O_NONBLOCK)) < 0) 
     {
-        printf("Error opening %s: %s\n", portalpath, strerror(errno));
+        printf("Error opening %s: %s\n", _portalpath, strerror(errno));
         return -1;
     }
 
-    if (setinterface(portal, B115200))
+    if (setinterface(fd, B115200))
     {
         printf("Failed to configure portal\n");
+        close(fd);
         return -1;
     }
+
+    portal->fd = fd;
+    portal->readbuf = malloc(BUFFER_SIZE);
 
     return 0;
 }
 
-int portalframe(struct Portal *portal)
+void portalclose(struct Portal *portal)
 {
+    for (int j = 0; j < portal->cmdstackpos; j++)
+        free(portal->cmdstack[j]);
+
+    if (portal->readbuf)
+    {
+        free(portal->readbuf);
+        portal->readbuf = NULL;        
+    }
+
+    if (portal->fd)
+    {
+        close(portal->fd);
+        portal->fd = 0;
+    }
+
+    portal->retry = 100;
+}
+
+void portalframe(struct Portal *portal)
+{
+    if (!portal->fd)
+    {
+        if (portal->retry > 0)
+        {
+            portal->retry--;
+            return;
+        }
+        else
+        {
+            if (portalopen(portal))
+            {
+                printf("Failed to open portal connection. Attempting to reconnect in 10 seconds.\n");
+                portalclose(portal);
+                return;
+            }
+            else
+            {
+                // Force send core
+                writestr(portal, "core");
+                writestr(portal, _core);
+                writeeom(portal);
+
+                // Force send rom
+                writestr(portal, "rom");
+                writestr(portal, _rom);
+                writeeom(portal);
+            }
+        }
+    }
+
+    int res;
     int readlen = read(portal->fd, portal->readbuf + portal->readpos, BUFFER_SIZE - portal->readpos - 1);
     if (readlen > 0)
     {
@@ -599,64 +701,117 @@ int portalframe(struct Portal *portal)
                 portal->readpos++;
             }
         }
+
+        res = 0;
     }
     else if (readlen == -1)
     {
         // No data available
+        res = 0;
     }
     else if (readlen < 0)
     {
         printf("Error from read: %d: %s\n", readlen, strerror(errno));
-        return -1;
+        res = -1;
     }
     else // readlen == 0
     {  
         printf("Timeout from read\n");
-        return -1;
+        res = -1;
     }
 
-    return 0;
+    if (res != 0)
+    {
+        printf("Portal connection failed. Attempting to reconnect in 10 seconds.\n");
+        portalclose(portal);
+    }
 }
 
-void portalclose(struct Portal *portal)
-{
-    for (int j = 0; j < portal->cmdstackpos; j++)
-        free(portal->cmdstack[j]);
-
-    free(portal->readbuf);
-
-    if (portal->fd > 0)
-        close(portal->fd);
-}
-
-int notifyinit(struct Notify *notify, struct Portal *portal)
+void notifyinit(struct Notify *notify, struct Portal *portal)
 {
     notify->id = 0;
-    notify->readbuf = malloc(EVENT_BUFFER_SIZE);
+    notify->readbuf = NULL;
     notify->watchcore = 0;
     notify->watchroms = 0;
     notify->portal = portal;
+    notify->retry = 0;
+}
 
-    if ((notify->id = inotify_init()) < 0)
+int notifyopen(struct Notify *notify)
+{
+    int id;
+    if ((id = inotify_init()) < 0)
     {
         printf("Failed to initialize inotify");
         return -1;
     }
 
-    int flags = fcntl(notify->id, F_GETFL, 0);
-    fcntl(notify->id, F_SETFL, flags | O_NONBLOCK);
+    int flags = fcntl(id, F_GETFL, 0);
+    fcntl(id, F_SETFL, flags | O_NONBLOCK);
 
-    if ((notify->watchcore = inotify_add_watch(notify->id, "/tmp/CORENAME", IN_MODIFY)) < 0)
+    int watchcore;
+    if ((watchcore = inotify_add_watch(id, "/tmp/CORENAME", IN_MODIFY)) < 0)
     {
-        printf("Failed to watch /tmp/CORENAME");
+        printf("Failed to watch /tmp/CORENAME\n");
+        close(id);
         return -1;
     }
+
+    notify->id = id;
+    notify->readbuf = malloc(EVENT_BUFFER_SIZE);
+    notify->watchcore = watchcore;
 
     return 0;
 }
 
-int notifyframe(struct Notify *notify)
+void notifyclose(struct Notify *notify)
 {
+    if (notify->readbuf)
+    {
+        free(notify->readbuf);
+        notify->readbuf = NULL;
+    }
+
+    if (notify->id)
+    {
+        if (notify->watchcore)
+            inotify_rm_watch(notify->id, notify->watchcore);
+
+        if (notify->watchroms)
+            inotify_rm_watch(notify->id, notify->watchroms);
+
+        close(notify->id);
+        notify->id = 0;
+    }
+
+    notify->retry = 100;
+}
+
+void notifyframe(struct Notify *notify)
+{
+    if (!notify->id)
+    {
+        if (notify->retry > 0)
+        {
+            notify->retry--;
+            return;
+        }
+        else
+        {
+            if (notifyopen(notify))
+            {
+                printf("Failed to initialize notify. Attempting to reinitialize in 10 seconds.\n");
+                notifyclose(notify);
+                return;
+            }
+            else
+            {
+                readcore(notify);
+            }
+        }
+    }
+
+    int res;
     int readlen = read(notify->id, notify->readbuf, EVENT_BUFFER_SIZE);
     if (readlen > 0)
     {
@@ -668,86 +823,60 @@ int notifyframe(struct Notify *notify)
             if (event->wd == notify->watchcore)
             {
                 printf("Core changed\n");
-                readcore(notify->portal, notify);
+                readcore(notify);
             }
-            else if (notify->watchcore > 0 && event->wd == notify->watchroms)
+            else if (notify->watchroms && event->wd == notify->watchroms)
             {
                 if (event->len > 0)
                 {
-                    printf("Game opened\n");
-                    printf("%s\n", event->name);
+                    printf("Game opened: %s\n", event->name);
                     readrom(notify->portal, event->name);
                 }
             }
         }
+
+        res = 0;
     }
     else if (readlen == -1)
     {
         // No data available
+        res = 0;
     }
     else if (readlen < 0)
     {
         printf("Error from notify read: %d: %s\n", readlen, strerror(errno));
-        return -1;
+        res = -1;
     }
     else // readlen == 0
     {  
         printf("Timeout from notify read\n");
-        return -1;
+        res = -1;
     }
 
-    return 0;
-}
-
-void notifyclose(struct Notify *notify)
-{
-    free(notify->readbuf);
-
-    if (notify->id > 0)
+    if (res != 0)
     {
-        if (notify->watchcore > 0)
-            inotify_rm_watch(notify->id, notify->watchcore);
-
-        if (notify->watchroms > 0)
-            inotify_rm_watch(notify->id, notify->watchroms);
-
-        close(notify->id);
+        printf("Notify failed. Attempting to reinitialize in 10 seconds.\n");
+        notifyclose(notify);
     }
 }
 
-void process(char *portalpath)
+void process()
 {
     struct Portal portal;
-    if (!portalinit(&portal, portalpath))
+    portalinit(&portal);
+
+    struct Notify notify;
+    notifyinit(&notify, &portal);
+
+    while (!_terminated)
     {
-        struct Notify notify;
-        if (!notifyinit(&notify, &portal))
-        {
-            // Force read of core
-            _core = "";
-            readcore(&portal, &notify);
-
-            // Force send rom
-            writestr(&portal, "rom");
-            writestr(&portal, _rom);
-            writeeom(&portal);
-
-            while (!_terminated)
-            {
-                if (portalframe(&portal))
-                    break;
-
-                if (notifyframe(&notify))
-                    break;
-                
-                msleep(100);
-            }
-
-            notifyclose(&notify);
-        }
-
-        portalclose(&portal);
+        portalframe(&portal);
+        notifyframe(&notify);
+        msleep(100);
     }
+
+    notifyclose(&notify);
+    portalclose(&portal);
 }
 
 void signalhandler(int signal)
@@ -787,6 +916,7 @@ int initialize()
 	_terminated = 0;
     _core = "";
     _rom = "";
+    _peekmountpath = (char *)NULL;
 
     if (dbopen(&_db))
         return -1;
@@ -801,6 +931,7 @@ int initialize()
 
 void cleanup()
 {
+    peekunmount();
     dbclose(&_db);
 }
 
@@ -808,7 +939,7 @@ int main_service(int argc, char *argv[])
 {
     printf("Starting service...\n");
 
-    char *portalpath = (argc > 2) ? argv[2] : "/dev/ttyACM2";
+    _portalpath = (argc > 2) ? argv[2] : "/dev/ttyACM2";
 
 	if (initialize())
 		return 1;
@@ -817,20 +948,7 @@ int main_service(int argc, char *argv[])
 
 	printf("Entering main loop...\n");
 	
-	while (!_terminated)
-	{
-		process(portalpath);
-
-        if (!_terminated)
-        {
-            printf("Connection failed. Attempting to reconnect in 10 seconds.\n");
-
-            for (int i = 0; i < 100 && !_terminated; i++)
-            {
-                msleep(100);
-            }
-        }
-	}
+    process();
 
 	printf("\n");
 	printf("Cleaning up!\n");
