@@ -182,7 +182,7 @@ int writeraw(struct Portal *portal, char *s, int sendlen)
 {
     if (!portal->fd)
         return -1;
-    
+
     int writelen = write(portal->fd, s, sendlen);
     if (writelen != sendlen)
     {
@@ -670,7 +670,7 @@ void portalclose(struct Portal *portal)
     if (portal->readbuf)
     {
         free(portal->readbuf);
-        portal->readbuf = NULL;        
+        portal->readbuf = NULL;
     }
 
     if (portal->fd)
@@ -701,6 +701,10 @@ void portalframe(struct Portal *portal)
             }
             else
             {
+                // Send dummy message to flush garbage
+                writestr(portal, "dummy");
+                writeeom(portal);
+
                 // Force send core
                 writestr(portal, "core");
                 writestr(portal, _core);
@@ -933,8 +937,8 @@ void process()
 
     while (!_terminated)
     {
-        portalframe(&portal);
         notifyframe(&notify);
+        portalframe(&portal);
         msleep(100);
     }
 
