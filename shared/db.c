@@ -45,9 +45,7 @@ int dbopen(struct Database *db)
     }
 
     mdb_env_set_maxdbs(db->env, 5);
-
-    // Use default configuration for now
-    //mdb_env_set_mapsize(db->env, (size_t)1048576 * (size_t)50); // 1MB * 50
+    mdb_env_set_mapsize(db->env, (size_t)1048576 * (size_t)50); // 1MB * 50
 
     if ((rc = mdb_env_open(db->env, _dbpath, 0, 0664)))
     {
