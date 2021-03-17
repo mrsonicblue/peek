@@ -162,6 +162,8 @@ Usage: `peek db del KEY [VALUE]`
 Deletes records with the provided `KEY`. When `VALUE` is provide, only the record with the matching
 value is deleted. When `VALUE` is omitted, all records with the matching key are deleted.
 
+Example: `peek db del fav/NES "Some Game.nes"`
+
 ### Delete prefix
 
 Usage: `peek db delpre PREFIX`
