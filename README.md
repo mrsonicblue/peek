@@ -119,18 +119,55 @@ for all of the files with the same facet.
 
 ## Utility Commands
 
-The `peek` command provives utilities to manage filter data.
+The `peek` command provides utilities to manage filter data.
 
 ### Get
 
+Usage: `peekfs db get [KEY]`
+
+When `KEY` is provided, all data with that key is shown. When `KEY` is omitted, all data is shown.
+
+Example: `peekfs db get fav/NES`
+
 ### Get prefix
+
+Usage: `peekfs db getpre PREFIX`
+
+All data is shown with a key that begins with `PREFIX`.
+
+Example: `peekfs db getpre has/NES/`
 
 ### Get slice
 
+Usage: `peekfs db getsli PREFIX`
+
+Keys are searched which begin with `PREFIX`. A value is extract between the prefix and the next `/`.
+A distinct list of the extracted values is show. This simulates how folders are generated for the
+facet filter.
+
+Example: `peekfs db getsli has/NES/`
+
 ### Put
+
+Usage: `peekfs db put KEY VALUE`
+
+A record is created with the given `KEY` and `VALUE`, unless it already exists.
+
+Example: `peekfs db put fav/NES "Some Game.nes"`
 
 ### Delete
 
+Usage: `peekfs db del KEY [VALUE]`
+
+Deletes records with the provided `KEY`. When `VALUE` is provide, only the record with the matching
+value is deleted. When `VALUE` is omitted, all records with the matching key are deleted.
+
 ### Delete prefix
 
+Usage: `peekfs db delpre PREFIX`
+
+Identical to [get prefix](#get-prefix), except matching records are deleted.
+
 ### Import
+
+Usage: `peekfs db import`
