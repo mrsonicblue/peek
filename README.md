@@ -123,51 +123,85 @@ The `peek` command provides utilities to manage filter data.
 
 ### Get
 
-Usage: `peekfs db get [KEY]`
+Usage: `peek db get [KEY]`
 
 When `KEY` is provided, all data with that key is shown. When `KEY` is omitted, all data is shown.
 
-Example: `peekfs db get fav/NES`
+Example: `peek db get fav/NES`
 
 ### Get prefix
 
-Usage: `peekfs db getpre PREFIX`
+Usage: `peek db getpre PREFIX`
 
 All data is shown with a key that begins with `PREFIX`.
 
-Example: `peekfs db getpre has/NES/`
+Example: `peek db getpre has/NES/`
 
 ### Get slice
 
-Usage: `peekfs db getsli PREFIX`
+Usage: `peek db getsli PREFIX`
 
 Keys are searched which begin with `PREFIX`. A value is extract between the prefix and the next `/`.
 A distinct list of the extracted values is show. This simulates how folders are generated for the
 facet filter.
 
-Example: `peekfs db getsli has/NES/`
+Example: `peek db getsli has/NES/`
 
 ### Put
 
-Usage: `peekfs db put KEY VALUE`
+Usage: `peek db put KEY VALUE`
 
 A record is created with the given `KEY` and `VALUE`, unless it already exists.
 
-Example: `peekfs db put fav/NES "Some Game.nes"`
+Example: `peek db put fav/NES "Some Game.nes"`
 
 ### Delete
 
-Usage: `peekfs db del KEY [VALUE]`
+Usage: `peek db del KEY [VALUE]`
 
 Deletes records with the provided `KEY`. When `VALUE` is provide, only the record with the matching
 value is deleted. When `VALUE` is omitted, all records with the matching key are deleted.
 
 ### Delete prefix
 
-Usage: `peekfs db delpre PREFIX`
+Usage: `peek db delpre PREFIX`
 
-Identical to [get prefix](#get-prefix), except matching records are deleted.
+Identical to [get prefix](#get-prefix), except matching records are deleted. This is useful for
+clearing out [imported](#import) data.
+
+Example: `peek db delpre has/NES/`
 
 ### Import
 
-Usage: `peekfs db import`
+Usage: `peek db import CORENAME FILE`
+
+Import a tab-delimited file for the [facet filter](#facet-filter). `CORENAME` is used to generate
+keys for the appropriate core. The file to import is provided with `FILE`. The first column in the file 
+must be a filename. All remaining columns are assumed to be filters. The first line of the file is used 
+as a header and is used as the top-level facet value. The associated values in each column are the 
+second-level facet value. To provide multiple second-level facets for the same file, delimit the values 
+with `|`. Given this file:
+
+```
+ROM     Region     Year Genre
+One.nes USA|Europe 1982 Action
+Two.nes USA        1984 Sports|Basketball
+```
+
+**Note:** this example is space delimited due to limitations of the documentation, but it must
+be tab-delimited.
+
+These records will be created:
+
+```
+has/NES/Region/USA       -> One.nes
+has/NES/Region/Europe    -> One.nes
+has/NES/Region/USA       -> Two.nes
+has/NES/Year/1982        -> One.nes
+has/NES/Year/1984        -> Two.nes
+has/NES/Genre/Action     -> One.nes
+has/NES/Genre/Sports     -> Two.nes
+has/NES/Genre/Basketball -> Two.nes
+```
+
+Example: `peek db import NES NES.txt`
