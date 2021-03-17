@@ -53,3 +53,84 @@ If you navigate to the mount folder, you will see subdirectories for each filter
 ```
 unmount /media/fat/games/NES/Peek
 ```
+
+### Service
+
+In addition to hosting some [utility commands](#utility-commands), the `peek` command is a service which monitors 
+for cores and ROMs loaded by MiSTer. Although the [service script](#installing) is recommended, the service can be 
+run manually:
+
+```
+./peek
+```
+
+When a core is loaded, a subfolder named `Peek` is created and mounted to. When a new core is loaded, the previous mount 
+is unmounted. The subfolder is not deleted to prevent unnecessary writes on the SD card.
+
+When a rom is loaded, it is automatically added to the recently played filter. See [filters](#filters).
+
+**Note:** The service currently tries to connect a serial device. This is meant to provide control from an
+external microcontroller. This feature is not yet documented. You will see an error every 10 seconds because
+the connection to that device will fail.
+
+## Filters
+
+Most filters rely on data stored in a database maintained by the `peek` command. The database is a simple key/value
+store. The keys are structured to support the filters and the values are (typically) filenames. Because ROM files
+are split between different folders per core, the keys are also organized by core. The core name is extracted from
+the mount path. For example, when mounted at `/media/fat/games/NES/Peek` the core is assumed to be `NES`. In the 
+notes for each filter, `CORENAME` is used as a placeholder for this value.
+
+Files displayed in a filter act as a passthrough to the actual file in the parent directory of the mount. Because of
+this, any filename referenced in the database which does not match an actual file will be excluded from the file 
+listing.
+
+### First-letter filter
+
+A subfolder is created for each letter of the alphabet and `0-9`. Each folder display files with a filename starting
+with the same first character. Despite the name, the `0-9` folder will display files starting with any character not
+between A and Z. This filter does not reply on an data.
+
+See [utility commands](#utility-commands) for details on how to manage and import data.
+
+### Favorites filter
+
+Files are displayed which match the key `fav/CORENAME`.
+
+### Recently played filter
+
+Files are displayed which match the key `rec/CORENAME`. The value for this filter is prefixed with 8 bytes which are
+ignored. The prefix is a timestamp used to automatically remove files after a maximum of 20.
+
+### Facet filter
+
+Additional folders are created for keys matching the mattern `has/CORENAME/ONE/TWO`. `ONE` is the top level folder and 
+`TWO` is the second level folder. This filter currently only supports exactly two levels (neither less nor more).
+Given the following list of keys:
+
+```
+has/NES/Year/1982
+has/NES/Year/1983
+has/NES/Year/1984
+```
+
+A top level folder `Year` will appear with subdirectories for `1982`, `1983`, and `1984`. The same key would be used
+for all of the files with the same facet.
+
+## Utility Commands
+
+The `peek` command provives utilities to manage filter data.
+
+### Get
+
+### Get prefix
+
+### Get slice
+
+### Put
+
+### Delete
+
+### Delete prefix
+
+### Import
