@@ -333,6 +333,48 @@ void runcmd_dbget(struct Portal *portal, char *cmdkey, char *key)
     }
 }
 
+void runcmd_dbkeys(struct Portal *portal, char *cmdkey, char *value)
+{
+    if (!dbtxnopen(&_db, 1))
+    {
+        int rc;
+
+        if (!dbcuropen(&_db))
+        {
+            MDB_val dbkey;
+            MDB_val dbdata;
+            MDB_val dbvalue = {strlen(value) + 1, value};
+
+            writestr(portal, cmdkey);
+
+            if ((rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_FIRST)))
+            {
+                printf("No data found: %d\n", rc);
+            }
+            else
+            {
+                printf("Data found!\n");
+
+                do
+                {
+                    if (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbvalue, MDB_GET_BOTH)))
+                    {
+                        printf("Data: %s\n", (char *)dbkey.mv_data);
+                        writestr(portal, (char *)dbkey.mv_data);
+                    }
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT_NODUP)));
+            }
+
+            writeeom(portal);
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+}
+
 void runcmd_dbchk(struct Portal *portal, char *cmdkey, char *key, char *data)
 {
     if (!dbtxnopen(&_db, 1))
@@ -419,7 +461,7 @@ void runcmd(struct Portal *portal)
     }
     else if (strcmp(stack[1], "dbget") == 0)
     {
-        // Get database records for key
+        // Get database values for key
         if (count < 3)
         {
             printf("'dbget' command requires three arguments\n");
@@ -427,6 +469,17 @@ void runcmd(struct Portal *portal)
         }
 
         runcmd_dbget(portal, stack[0], stack[2]);
+    }
+    else if (strcmp(stack[1], "dbkeys") == 0)
+    {
+        // Get database keys for value
+        if (count < 3)
+        {
+            printf("'dbkeys' command requires three arguments\n");
+            return;
+        }
+
+        runcmd_dbkeys(portal, stack[0], stack[2]);
     }
     else if (strcmp(stack[1], "dbchk") == 0)
     {
@@ -1225,6 +1278,53 @@ int main_db_del(int argc, char *argv[])
     return 0;
 }
 
+int main_db_keys(int argc, char *argv[])
+{
+    if (argc < 4)
+    {
+        printf("Keys command requires value\n");
+        return 1;
+    }
+
+    char *value = argv[3];
+
+    if (!dbtxnopen(&_db, 1))
+    {
+        int rc;
+        if (!dbcuropen(&_db))
+        {
+            MDB_val dbkey;
+            MDB_val dbdata;
+            MDB_val dbvalue = {strlen(value) + 1, value};
+
+            rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_FIRST);
+
+            if (rc)
+            {
+                printf("No data found: %d\n", rc);
+            }
+            else
+            {
+                printf("Data found!\n");
+                do
+                {
+                    if (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbvalue, MDB_GET_BOTH)))
+                    {
+                        printf("Data: %s\n", (char *)dbkey.mv_data);
+                    }
+                }
+                while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT_NODUP)));
+            }
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+
+    return 0;
+}
+
 void main_db_import_put(char *core, char *rom, char *has, char *value)
 {
     if (strlen(value) == 0)
@@ -1363,6 +1463,10 @@ int main_db(int argc, char *argv[])
     else if (strcmp(cmd, "getsli") == 0)
     {
         res = main_db_sli(argc, argv);
+    }
+    else if (strcmp(cmd, "getkeys") == 0)
+    {
+        res = main_db_keys(argc, argv);
     }
     else if (strcmp(cmd, "put") == 0)
     {

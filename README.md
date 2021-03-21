@@ -147,6 +147,14 @@ facet filter.
 
 Example: `peek db getsli has/NES/`
 
+### Get keys
+
+Usage: `peek db getkeys PREFIX`
+
+All keys are returned for given `VALUE`.
+
+Example: `peek db getkeys "Some Game.nes"`
+
 ### Put
 
 Usage: `peek db put KEY VALUE`
