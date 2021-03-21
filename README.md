@@ -19,7 +19,7 @@ Binary releases are not currently available. Docker can be used on any platform 
 docker-compose run --rm build make
 ```
 
-This will produce to executable binaries: `peek` and `peekfs`
+This will produce two executable binaries: `peek` and `peekfs`
 
 ### Installing
 
