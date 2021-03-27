@@ -1056,7 +1056,7 @@ int main_service(int argc, char *argv[])
 {
     printf("Starting service...\n");
 
-    _portalpath = (argc > 2) ? argv[2] : "/dev/ttyACM2";
+    _portalpath = (argc > 2) ? argv[2] : "/dev/peek-screen";
 
 	if (initialize())
 		return 1;
