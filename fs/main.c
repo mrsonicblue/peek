@@ -27,7 +27,8 @@ enum peekcmd
     PEEKCMD_FAV,
     PEEKCMD_REC,
     PEEKCMD_ALPHA,
-    PEEKCMD_HAS
+    PEEKCMD_HAS,
+    PEEKCMD_MANAGE
 };
 
 struct PathInfo
@@ -42,11 +43,30 @@ struct PathInfo
 static const char *__favpath = "Favorites";
 static const char *__recpath = "Recently Played";
 static const char *__alphapath = "A-Z";
+static const char *__managepath = "~ Manage Data";
+static const char *__managefav = "Favorite";
+static const char *__manageyay = "Updated!";
 
 static struct Database _db;
 static char *_mountpath;
 static char *_srcpath;
 static char *_corename;
+
+static char *trimcheck(char *s, int *c)
+{
+    // Search for "[ ] " or "[X] " at beginning of string and remove if present
+    if (strlen(s) >= 4)
+    {
+        if (s[0] == '[' && (s[1] == ' ' || s[1] == 'X') && s[2] == ']' && s[3] == ' ')
+        {
+            *c = (s[1] == 'X') ? 1 : 0;
+            return s + 4;
+        }
+    }
+
+    *c = -1;
+    return s;
+}
 
 static void peek_parsepathrelease(struct PathInfo *info)
 {
@@ -73,6 +93,7 @@ static int peek_isfile(struct PathInfo *info)
             return (info->stacklen == 3) ? 1 : 0;
 
         case PEEKCMD_ROOT:
+        case PEEKCMD_MANAGE:
             break;
     }
 
@@ -134,6 +155,10 @@ static int peek_parsepath(struct PathInfo *info, const char *path)
         else if (strcmp(first, __alphapath) == 0)
         {
             cmd = PEEKCMD_ALPHA;
+        }
+        else if (strcmp(first, __managepath) == 0)
+        {
+            cmd = PEEKCMD_MANAGE;
         }
         else
         {
@@ -297,6 +322,7 @@ static void peek_readdir_root(struct PathInfo *info, void *buf, fuse_fill_dir_t 
     peek_fakefill(buf, __favpath, filler);
     peek_fakefill(buf, __recpath, filler);
     peek_fakefill(buf, __alphapath, filler);
+    peek_fakefill(buf, __managepath, filler);
 
     char prefix[BUFFER_SIZE];
     sprintf(prefix, "has/%s/", _corename);
@@ -311,7 +337,7 @@ static void peek_readdir_fav(struct PathInfo *info, void *buf, fuse_fill_dir_t f
     peek_readdir_filekey(info, buf, filler, filekey, 0);
 }
 
-static void peek_readdir_alpha1(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+static void peek_readdir_alpha_root(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
 {
     (void) info;
 
@@ -325,7 +351,7 @@ static void peek_readdir_alpha1(struct PathInfo *info, void *buf, fuse_fill_dir_
     }
 }
 
-static void peek_readdir_alpha2(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+static void peek_readdir_alpha_letter(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
 {
     (void) info;
 
@@ -383,7 +409,7 @@ static void peek_readdir_rec(struct PathInfo *info, void *buf, fuse_fill_dir_t f
     peek_readdir_filekey(info, buf, filler, filekey, TIME_LEN);
 }
 
-static void peek_readdir_has1(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+static void peek_readdir_has_level1(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
 {
     (void) info;
 
@@ -392,11 +418,102 @@ static void peek_readdir_has1(struct PathInfo *info, void *buf, fuse_fill_dir_t 
     peek_readdir_dbslice(info, buf, filler, prefix);
 }
 
-static void peek_readdir_has2(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+static void peek_readdir_has_level2(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
 {
     char filekey[BUFFER_SIZE];
     sprintf(filekey, "has/%s/%s/%s", _corename, info->stack[0], info->stack[1]);
     peek_readdir_filekey(info, buf, filler, filekey, 0);
+}
+
+static void peek_readdir_manage_root(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+{
+    (void) info;
+
+    DIR *dp;
+	if ((dp = opendir(_srcpath)) == NULL)
+		return;
+    
+	struct dirent *de;
+	while ((de = readdir(dp)) != NULL)
+    {
+        if (de->d_type == 8 /* DT_REG */)
+        {
+            peek_fakefill(buf, de->d_name, filler);
+        }
+	}
+
+    closedir(dp);
+}
+
+static void peek_readdir_manage_file(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+{
+    char *file = info->stack[1];
+
+    if (!dbtxnopen(&_db, 1))
+    {
+        int rc;
+
+        if (!dbcuropen(&_db))
+        {
+            char tmp[BUFFER_SIZE];
+            sprintf(tmp, "fav/%s", _corename);
+
+            MDB_val dbkey = {strlen(tmp) + 1, tmp};
+            MDB_val dbdata = {strlen(file) + 1, file};
+
+            int fav = !(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_GET_BOTH));
+
+            sprintf(tmp, "[%c] %s", fav ? 'X' : ' ', __managefav);
+            peek_fakefill(buf, tmp, filler);
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+}
+
+static void peek_readdir_manage_yay(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+{
+    (void) info;
+    
+    peek_fakefill(buf, __manageyay, filler);
+}
+
+static void peek_readdir_manage_fav(struct PathInfo *info, void *buf, fuse_fill_dir_t filler, int checked)
+{
+    char *file = info->stack[1];
+
+    if (!dbtxnopen(&_db, 0))
+    {
+        if (!dbcuropen(&_db))
+        {
+            char tmp[BUFFER_SIZE];
+            sprintf(tmp, "fav/%s", _corename);
+
+            if (checked == 1)
+                dbdel(&_db, tmp, file);
+            else
+                dbput(&_db, tmp, file);
+
+            peek_readdir_manage_yay(info, buf, filler);
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+}
+
+static void peek_readdir_manage_level3(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+{
+    int checked;
+    char *level = trimcheck(info->stack[2], &checked);
+
+    if (strcmp(level, __managefav) == 0)
+    {
+        peek_readdir_manage_fav(info, buf, filler, checked);
+    }
 }
 
 static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
@@ -427,11 +544,11 @@ static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off
             switch (info.stacklen)
             {
                 case 1:
-                    peek_readdir_alpha1(&info, buf, filler);
+                    peek_readdir_alpha_root(&info, buf, filler);
                     break;
 
                 case 2:
-                    peek_readdir_alpha2(&info, buf, filler);
+                    peek_readdir_alpha_letter(&info, buf, filler);
                     break;
             }
             break;
@@ -444,11 +561,28 @@ static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off
             switch (info.stacklen)
             {
                 case 1:
-                    peek_readdir_has1(&info, buf, filler);
+                    peek_readdir_has_level1(&info, buf, filler);
                     break;
 
                 case 2:
-                    peek_readdir_has2(&info, buf, filler);
+                    peek_readdir_has_level2(&info, buf, filler);
+                    break;
+            }
+            break;
+
+        case PEEKCMD_MANAGE:
+            switch (info.stacklen)
+            {
+                case 1:
+                    peek_readdir_manage_root(&info, buf, filler);
+                    break;
+
+                case 2:
+                    peek_readdir_manage_file(&info, buf, filler);
+                    break;
+
+                case 3:
+                    peek_readdir_manage_level3(&info, buf, filler);
                     break;
             }
             break;
@@ -461,7 +595,7 @@ static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off
 
 static int peek_open(const char *path, struct fuse_file_info *fi)
 {
-    printf("peek_open: %s\n", path);
+    //printf("peek_open: %s\n", path);
 
     struct PathInfo info;
     if (peek_parsepath(&info, path))
@@ -481,7 +615,7 @@ static int peek_open(const char *path, struct fuse_file_info *fi)
 
 static int peek_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-    printf("peek_read: %s\n", path);
+    //printf("peek_read: %s\n", path);
 
     (void) path;
 
@@ -494,7 +628,7 @@ static int peek_read(const char *path, char *buf, size_t size, off_t offset, str
 
 static int peek_release(const char *path, struct fuse_file_info *fi)
 {
-    printf("peek_release: %s\n", path);
+    //printf("peek_release: %s\n", path);
 
     (void) path;
     close(fi->fh);
