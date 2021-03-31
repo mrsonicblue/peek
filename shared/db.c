@@ -61,7 +61,7 @@ int dbopen(struct Database *db)
             return -1;
         }
 
-        if ((rc = mdb_dbi_open(db->txn, "fil", MDB_CREATE, &db->dbstr)))
+        if ((rc = mdb_dbi_open(db->txn, "str", MDB_CREATE, &db->dbstr)))
         {
             printf("Failed to open string database: %d\n", rc);
             return -1;

@@ -269,7 +269,7 @@ static void peek_readdir_filekey(struct PathInfo *info, void *buf, fuse_fill_dir
     closedir(dp);
 }
 
-static void peek_readdir_dbslice(struct PathInfo *info, void *buf, fuse_fill_dir_t filler, char *prefix)
+static void peek_readdir_dbslice(struct PathInfo *info, void *buf, fuse_fill_dir_t filler, char *prefix, char *checkfile)
 {
     (void) info;
 
@@ -279,9 +279,23 @@ static void peek_readdir_dbslice(struct PathInfo *info, void *buf, fuse_fill_dir
 
     if (!dbtxnopen(&_db, 1))
     {
-        int rc;
         if (!dbcuropen(&_db))
         {
+            int rc;
+            MDB_cursor *checkcur = NULL;
+            MDB_val dbfile;
+            if (checkfile)
+            {
+                dbfile.mv_size = strlen(checkfile) + 1;
+                dbfile.mv_data = checkfile;
+
+                if ((rc = mdb_cursor_open(_db.txn, _db.dbfil, &checkcur)))
+                {
+                    printf("Failed to open cursor: %d\n", rc);
+                    return;
+                }
+            }
+
             MDB_val dbkey = {prefixlen + 1, prefix};
             MDB_val dbdata;
 
@@ -298,8 +312,21 @@ static void peek_readdir_dbslice(struct PathInfo *info, void *buf, fuse_fill_dir
 
                     if (slicelen != curlen || memcmp(slice, curstart, slicelen) != 0)
                     {
-                        memcpy(slice, curstart, curlen);
-                        slice[curlen] = '\0';
+                        int sliceindex = 0;
+
+                        if (checkfile)
+                        {
+                            int has = !(rc = mdb_cursor_get(_db.cur, &dbkey, &dbfile, MDB_GET_BOTH));
+
+                            slice[0] = '[';
+                            slice[1] = has ? 'X' : ' ';
+                            slice[2] = ']';
+                            slice[3] = ' ';
+                            sliceindex = 4;
+                        }
+
+                        memcpy(slice + sliceindex, curstart, curlen);
+                        slice[curlen + sliceindex] = '\0';
                         slicelen = curlen;
 
                         peek_fakefill(buf, slice, filler);
@@ -307,6 +334,9 @@ static void peek_readdir_dbslice(struct PathInfo *info, void *buf, fuse_fill_dir
                 }
                 while (!(rc = mdb_cursor_get(_db.cur, &dbkey, &dbdata, MDB_NEXT_NODUP)));
             }
+
+            if (checkfile)
+                mdb_cursor_close(checkcur);
 
             dbcurclose(&_db);
         }
@@ -326,7 +356,7 @@ static void peek_readdir_root(struct PathInfo *info, void *buf, fuse_fill_dir_t 
 
     char prefix[BUFFER_SIZE];
     sprintf(prefix, "has/%s/", _corename);
-    peek_readdir_dbslice(info, buf, filler, prefix);
+    peek_readdir_dbslice(info, buf, filler, prefix, NULL);
 }
 
 static void peek_readdir_fav(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
@@ -415,7 +445,7 @@ static void peek_readdir_has_level1(struct PathInfo *info, void *buf, fuse_fill_
 
     char prefix[BUFFER_SIZE];
     sprintf(prefix, "has/%s/%s/", _corename, info->stack[0]);
-    peek_readdir_dbslice(info, buf, filler, prefix);
+    peek_readdir_dbslice(info, buf, filler, prefix, NULL);
 }
 
 static void peek_readdir_has_level2(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
@@ -449,6 +479,7 @@ static void peek_readdir_manage_file(struct PathInfo *info, void *buf, fuse_fill
 {
     char *file = info->stack[1];
 
+    // Read if favorite
     if (!dbtxnopen(&_db, 1))
     {
         int rc;
@@ -471,6 +502,11 @@ static void peek_readdir_manage_file(struct PathInfo *info, void *buf, fuse_fill
 
         dbtxnclose(&_db);
     }
+
+    // Read level 1 filters
+    char prefix[BUFFER_SIZE];
+    sprintf(prefix, "has/%s/", _corename);
+    peek_readdir_dbslice(info, buf, filler, prefix, NULL);
 }
 
 static void peek_readdir_manage_yay(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
@@ -480,7 +516,7 @@ static void peek_readdir_manage_yay(struct PathInfo *info, void *buf, fuse_fill_
     peek_fakefill(buf, __manageyay, filler);
 }
 
-static void peek_readdir_manage_fav(struct PathInfo *info, void *buf, fuse_fill_dir_t filler, int checked)
+static void peek_readdir_manage_setfav(struct PathInfo *info, void *buf, fuse_fill_dir_t filler, int checked)
 {
     char *file = info->stack[1];
 
@@ -505,6 +541,35 @@ static void peek_readdir_manage_fav(struct PathInfo *info, void *buf, fuse_fill_
     }
 }
 
+static void peek_readdir_manage_sethas(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
+{
+    char *file = info->stack[1];
+    char *level1 = info->stack[2];
+
+    int checked;
+    char *level2 = trimcheck(info->stack[3], &checked);
+
+    if (!dbtxnopen(&_db, 0))
+    {
+        if (!dbcuropen(&_db))
+        {
+            char tmp[BUFFER_SIZE];
+            sprintf(tmp, "has/%s/%s/%s", _corename, level1, level2);
+
+            if (checked == 1)
+                dbdel(&_db, tmp, file);
+            else
+                dbput(&_db, tmp, file);
+
+            peek_readdir_manage_yay(info, buf, filler);
+
+            dbcurclose(&_db);
+        }
+
+        dbtxnclose(&_db);
+    }
+}
+
 static void peek_readdir_manage_level3(struct PathInfo *info, void *buf, fuse_fill_dir_t filler)
 {
     int checked;
@@ -512,7 +577,15 @@ static void peek_readdir_manage_level3(struct PathInfo *info, void *buf, fuse_fi
 
     if (strcmp(level, __managefav) == 0)
     {
-        peek_readdir_manage_fav(info, buf, filler, checked);
+        peek_readdir_manage_setfav(info, buf, filler, checked);
+    }
+    else
+    {
+        char *file = info->stack[1];
+
+        char prefix[BUFFER_SIZE];
+        sprintf(prefix, "has/%s/%s/", _corename, level);
+        peek_readdir_dbslice(info, buf, filler, prefix, file);
     }
 }
 
@@ -583,6 +656,10 @@ static int peek_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off
 
                 case 3:
                     peek_readdir_manage_level3(&info, buf, filler);
+                    break;
+
+                case 4:
+                    peek_readdir_manage_sethas(&info, buf, filler);
                     break;
             }
             break;
