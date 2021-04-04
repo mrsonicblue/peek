@@ -13,7 +13,7 @@ To get started, a few steps are required.
 
 ### Building
 
-Binary releases are not currently available. Docker can be used on any platform to build:
+Docker can be used on any platform to build:
 
 ```
 docker-compose run --rm build make
