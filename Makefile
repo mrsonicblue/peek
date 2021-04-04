@@ -7,10 +7,9 @@ all:
 clean:
 	$(MAKE) -C src clean
 	$(MAKE) -C fs clean
+	$(Q)rm -rf release
 
 release:
-	$(Q)mkdir -p release
-	$(Q)cp src/peek release/
-	$(Q)cp fs/peekfs release/
-	$(Q)cp S99peek release/
-	$(Q)cp import.txt release/
+	$(Q)mkdir -p release/peek
+	$(Q)cp src/peek fs/peekfs S99peek import.txt release/peek/
+	$(Q)cd release && $(Q)tar cvfz peek.tgz peek
