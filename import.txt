@@ -1,0 +1,3 @@
+ROM	Region	Year	Developer	Genre
+One.nes	USA|Europe	1985	Company 1	Sports|Traditional
+Two.nes	Japan|USA	1986	Company 2	Action|Shooter
