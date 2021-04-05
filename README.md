@@ -216,4 +216,4 @@ has/NES/Genre/Basketball -> Two.nes
 
 Example: `peek db import NES NES.txt`
 
-A reference project to generate this format is available [here](https://github.com/mrsonicblue/peek-tab)
+A reference project to generate this format is available [here](https://github.com/mrsonicblue/peek-tab).
