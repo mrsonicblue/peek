@@ -9,7 +9,19 @@ arbitrary files with only minor modification.
 
 ## Getting started 
 
-To get started, a few steps are required.
+An (experimental) install script is available. This will download the latest version and configure itself to
+automatically run on boot.
+
+To run the install script, open terminal with F9 (or connect with SSH) and run:
+
+```
+bash <(curl -ks https://raw.githubusercontent.com/mrsonicblue/peek/master/install.sh)
+```
+
+If this is successful, you will still need to [import](#import) data to make the [facet filter](#facet-filter) work.
+The import process will be automated in the future.
+
+If you wish to build the application from source or if you wish to customize it, continue on through this section.
 
 ### Building
 
