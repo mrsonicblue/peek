@@ -85,6 +85,20 @@ When a rom is loaded, it is automatically added to the recently played filter. S
 external microcontroller. This feature is not yet documented. You will see an error every 10 seconds because
 the connection to that device will fail.
 
+### Uninstalling
+
+To stop the Peek service:
+
+```
+/etc/init.d/S99peek stop
+```
+
+To remove Peek completely:
+
+```
+rm -rf /etc/init.d/S99peek /media/fat/peek
+```
+
 ## Filters
 
 Most filters rely on data stored in a database maintained by the `peek` command. The database is a simple key/value
