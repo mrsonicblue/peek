@@ -10,19 +10,13 @@ start() {
 
 stop() {
         printf "Shutting down peek services: "
-        kill -9 `pidof peek`
+        kill `pidof peek`
         [ $? = 0 ] && echo "OK" || echo "FAIL"
 }
 
 restart() {
         stop
         start
-}
-
-reload() {
-        printf "Reloading peek config: "
-        kill -HUP `pidof peek`
-        [ $? = 0 ] && echo "OK" || echo "FAIL"
 }
 
 case "$1" in
@@ -35,11 +29,8 @@ case "$1" in
   restart)
         restart
         ;;
-  reload)
-        reload
-        ;;
   *)
-        echo "Usage: $0 {start|stop|restart|reload}"
+        echo "Usage: $0 {start|stop|restart}"
         exit 1
 esac
 
