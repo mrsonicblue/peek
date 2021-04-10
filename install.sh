@@ -76,4 +76,9 @@ echo "${LATEST}" > "${VERSION_PATH}" || handle_error
 echo "OK"
 
 echo
-echo "All done!"
+echo "Installation has completed successfully. If this is a new install, you must scan your"
+echo "ROM files to load metadata into the filter database. A scan application is included to"
+echo "make this easy. You can run it the following command:"
+echo
+echo "       ${INSTALL_PATH}/scan"
+echo
