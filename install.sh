@@ -41,16 +41,6 @@ if [[ "${LATEST}" = "" ]]; then
 fi
 echo "${LATEST}"
 
-if [[ "${LATEST}" = "${INSTALLED}" ]]; then
-    echo
-    echo "You already have the latest version installed"
-    echo
-    echo "To force an install, remove this file and try again:"
-    echo "  ${VERSION_PATH}"
-    exit 0
-fi
-
-echo
 echo -n "Stopping any existing services... "
 PID=$(pidof peek)
 if [[ "${PID}" != "" ]]; then
@@ -65,6 +55,12 @@ echo "OK"
 echo -n "Downloading... "
 DOWNLOAD_URL="https://github.com/mrsonicblue/peek/releases/download/${LATEST}/peek-${LATEST}.tgz"
 wget -q -O - "$DOWNLOAD_URL" | tar xfz - --strip-components=1 -C "${INSTALL_PATH}" || handle_error
+echo "OK"
+
+echo -n "Linking scanner... "
+if [[ ! -f "${INSTALL_PATH}/scan" ]]; then
+    ln -s "${INSTALL_PATH}/scan-lib/Peek.Scan" "${INSTALL_PATH}/scan" || handle_error
+fi
 echo "OK"
 
 echo -n "Copying service script... "
