@@ -5,7 +5,7 @@ echo "-----------------------------"
 echo "Welcome to the Peek installer"
 echo "-----------------------------"
 
-PROGNAME=$(basename $0)
+PROGNAME=$(basename "$0")
 
 handle_error () {
     echo 1>&2
@@ -13,16 +13,24 @@ handle_error () {
     exit 1
 }
 
+is_version_lessthan() {
+    printf '%s\n%s' "$1" "$2" | sort -C -V
+}
+
+prompt_continue() {
+    read -r -p "${1} [Y/n] " response
+    if [[ ! "$response" =~ ^(|[yY]|[yY][eE][sS])$ ]]; then
+        echo "Exiting the installer per user request."
+        exit 0
+    fi
+}
+
 INSTALL_PATH="/media/fat/peek"
 VERSION_PATH="${INSTALL_PATH}/VERSION"
 
 echo
 echo "This will install (or upgrade) at: ${INSTALL_PATH}"
-read -r -p "-- Is this OK? [Y/n] " response
-if [[ ! "$response" =~ ^(|[yY]|[yY][eE][sS])$ ]]; then
-    echo "Exiting the installer per user request."
-    exit 0
-fi
+prompt_continue "-- Is this OK?"
 
 echo
 echo -n "Checking for installed version... "
@@ -44,6 +52,10 @@ if [[ "${LATEST}" = "" ]]; then
     handle_error "${LINENO}: Unable to get latest version from ${VERSION_URL}. Check internet connection."
 fi
 echo "${LATEST}"
+
+if [[ ! "${INSTALLED}" = "unknown" ]] && [[ ! "${INSTALLED}" = "not installed" ]] && [[ ! $(is_version_lessthan "${LATEST}" "${INSTALLED}") -eq 1 ]]; then
+    prompt_continue "Peek version appears up to date, re-install anyway?"
+fi
 
 echo -n "Stopping any existing services... "
 PID=$(pidof peek)
