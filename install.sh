@@ -14,7 +14,7 @@ handle_error () {
 }
 
 is_version_lessthan() {
-    printf '%s\n%s' "$1" "$2" | sort -C -V
+    printf '%s\n%s' "$1" "$2" | sort -C -V 
 }
 
 prompt_continue() {
@@ -53,7 +53,7 @@ if [[ "${LATEST}" = "" ]]; then
 fi
 echo "${LATEST}"
 
-if [[ ! "${INSTALLED}" = "unknown" ]] && [[ ! "${INSTALLED}" = "not installed" ]] && [[ ! $(is_version_lessthan "${LATEST}" "${INSTALLED}") -eq 1 ]]; then
+if [[ ! "${INSTALLED}" = "unknown" ]] && [[ ! "${INSTALLED}" = "not installed" ]] && is_version_lessthan "${LATEST}" "${INSTALLED}"; then
     prompt_continue "Peek version appears up to date, re-install anyway?"
 fi
 
