@@ -8,8 +8,9 @@ echo "-----------------------------"
 PROGNAME=$(basename $0)
 
 handle_error () {
-	echo "${PROGNAME}: ${1:-"Unknown Error"}. Exiting." 1>&2
-	exit 1
+    echo 1>&2
+    echo "${PROGNAME}: ${1:-"Unknown Error"}. Exiting." 1>&2
+    exit 1
 }
 
 INSTALL_PATH="/media/fat/peek"
@@ -40,7 +41,7 @@ echo -n "Checking for latest version... "
 VERSION_URL="https://api.github.com/repos/mrsonicblue/peek/releases/latest"
 LATEST=$(wget -q -O - "${VERSION_URL}" | jq -r .tag_name)
 if [[ "${LATEST}" = "" ]]; then
-    handle_error "${LINENO}: Unable to get latest version from ${VERSIONURL}. Check internet connection."
+    handle_error "${LINENO}: Unable to get latest version from ${VERSION_URL}. Check internet connection."
 fi
 echo "${LATEST}"
 
