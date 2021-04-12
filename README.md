@@ -21,9 +21,31 @@ bash <(curl -ks https://raw.githubusercontent.com/mrsonicblue/peek/master/instal
 If this is successful, you will still need to [import](#import) data to make the [facet filter](#facet-filter) work.
 A simple [scanner](https://github.com/mrsonicblue/peek-scan) is bundled in to help simplify this process.
 
-If you wish to build the application from source or if you wish to customize it, continue on through this section.
+To execute the scanner script from the default install location, run
 
-### Building
+```
+/media/fat/peek/scan
+```
+
+_Note: Scanning can take quite some time depending on the number of cores and
+ROMs present._
+
+You can also run this scan after changes to rom lists in order to regenerate
+the database.
+
+The application configuration for scanning is located in the file
+`/media/fat/peek/scan-lib/appsettings.json`. This controls settings such as the
+path to games as well as a whitelist and blacklist of cores to include/exclude.
+For example, to only scan the NES and SNES rom folders, you can change the
+the following line:
+
+```
+    "CoreWhiteList": "NES,SNES"
+```
+
+## Building
+
+If you wish to build the application from source or if you wish to customize it, continue on through this section.
 
 Docker can be used on any platform to build:
 
@@ -85,7 +107,7 @@ When a rom is loaded, it is automatically added to the recently played filter. S
 external microcontroller. This feature is not yet documented. You will see an error every 10 seconds because
 the connection to that device will fail.
 
-### Uninstalling
+## Uninstalling
 
 To stop the Peek service:
 
