@@ -18,8 +18,11 @@
 #include <db.h>
 #include <path.h>
 
+// Patha for games directory
 #define GAMES_PATH "/media/fat/games"
-#define MOUNT_NAME "Peek"
+
+// Mount path to use, NOTE: single ticks (') not allowed in mount name
+#define MOUNT_NAME "### Peek ###"
 #define MAX_RECENTS 20
 #define BUFFER_SIZE 4096
 #define EOM 4
@@ -556,7 +559,7 @@ void peekmount(char *romspath)
     printf("Mounting: %s\n", path);
 
     char procbuf[BUFFER_SIZE];
-    sprintf(procbuf, "%s %s", _peekfspath, path);
+    sprintf(procbuf, "%s '%s'", _peekfspath, path);
 
     int res;
     FILE *proc;
