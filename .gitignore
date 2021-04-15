@@ -1,0 +1,7 @@
+*.c.o
+*.c.d
+/src/peek
+/src/peek.elf
+/fs/peekfs
+/fs/peekfs.elf
+/release
