@@ -1,6 +1,6 @@
 from distutils.core import setup, Extension
 
-module = Extension('_sqlite',
+module = Extension('_sqlite3',
     define_macros = [('MODULE_NAME', '"_sqlite3"')],
     include_dirs = ['/usr/local/include','/build/sqlite'],
     library_dirs = ['/usr/local/lib'],
@@ -17,7 +17,7 @@ module = Extension('_sqlite',
         '/build/sqlite/sqlite3.c'
     ])
 
-setup (name = 'See Quill Lite',
+setup (name = 'See Quill Lite Three',
     version = '3.5.2',
     description = 'SQLite moved out',
     author = 'Eric Schneider',
