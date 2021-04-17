@@ -1,2 +1,4 @@
 S99peek eol=lf
-install.sh eol=lf
+*.c eol=lf
+*.py eol=lf
+*.sh eol=lf

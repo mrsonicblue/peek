@@ -5,3 +5,5 @@
 /fs/peekfs
 /fs/peekfs.elf
 /release
+/_sqlite3/build
+/_ssl/build
