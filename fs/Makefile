@@ -20,7 +20,7 @@ C_SRC = $(wildcard *.c) $(wildcard ../shared/*.c)
 OBJ	= $(C_SRC:.c=.c.o) $(CPP_SRC:.cpp=.cpp.o)
 
 DFLAGS = $(INCLUDE) -DHAVE_CONFIG_H -D_FILE_OFFSET_BITS=64 -D_REENTRANT
-CFLAGS = $(DFLAGS) -Wall -W -Wno-sign-compare -Wstrict-prototypes -Wmissing-declarations -Wwrite-strings -g -O2 -fno-strict-aliasing
+CFLAGS = $(DFLAGS) -Wall -W -Wno-sign-compare -Wstrict-prototypes -Wmissing-declarations -Wwrite-strings -g -O2 -fno-strict-aliasing -fPIC
 LFLAGS = $(LIBS) -pthread -Wl,-rpath -Wl,/build/gcc/lib -llmdb
 
 $(PRJ): $(OBJ)

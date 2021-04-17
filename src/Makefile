@@ -20,7 +20,7 @@ C_SRC = $(wildcard *.c) $(wildcard ../shared/*.c)
 OBJ	= $(C_SRC:.c=.c.o)
 
 DFLAGS = $(INCLUDE) -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE
-CFLAGS = $(DFLAGS) -Wall -Wextra -Wno-strict-aliasing -Wno-unused-parameter -c -O3
+CFLAGS = $(DFLAGS) -Wall -Wextra -Wno-strict-aliasing -Wno-unused-parameter -c -O3 -fPIC
 LFLAGS = $(LIBS) -lc -lstdc++ -lrt -lm -lpthread -ldl -llmdb
 
 $(PRJ): $(OBJ)
