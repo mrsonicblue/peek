@@ -18,10 +18,11 @@
 #include <db.h>
 #include <path.h>
 
-// Patha for games directory
+// Path for games directory
 #define GAMES_PATH "/media/fat/games"
 
-// Mount path to use, NOTE: single ticks (') not allowed in mount name
+// Mount directory name to use
+// NOTE: single ticks (') not allowed in mount name
 #define MOUNT_NAME "### Peek ###"
 #define MAX_RECENTS 20
 #define BUFFER_SIZE 4096
