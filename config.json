@@ -1,0 +1,14 @@
+{
+    "general": {
+        "games_path": "/media/fat/games",
+        "tabs_path": "/media/fat/peek/tabs",
+        "peek_path": "/media/fat/peek/peek",
+        "core_white_list": [],
+        "core_black_list": ["hbmame","mame","AO486"],
+        "rom_max_size": 1048576
+    },
+    "openvgdb": {
+        "enabled": true,
+        "database_path": "/media/fat/peek/openvgdb.sqlite"
+    }
+}
