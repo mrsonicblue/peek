@@ -1,5 +1,4 @@
-*.c.o
-*.c.d
+*.pyc
 /src/peek
 /src/peek.elf
 /fs/peekfs
