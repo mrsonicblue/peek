@@ -7,7 +7,7 @@ from scanner import Scanner
 app_path = pathlib.Path(__file__).resolve().parent.absolute()
 config_path = app_path / 'config.json'
 
-with open(str(config_path)) as f:
+with config_path.open('r', encoding='utf-8') as f:
     config = json.load(f)
 
 scanner = Scanner(config)

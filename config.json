@@ -1,14 +1,20 @@
 {
     "general": {
         "games_path": "/media/fat/games",
+        "meta_path": "/media/fat/peek/meta",
         "tabs_path": "/media/fat/peek/tabs",
         "peek_path": "/media/fat/peek/peek",
-        "core_white_list": [],
+        "core_white_list": ["NES"],
         "core_black_list": ["hbmame","mame","AO486"],
         "rom_max_size": 1048576
     },
     "openvgdb": {
         "enabled": true,
+        "priority": 1,
         "database_path": "/media/fat/peek/openvgdb.sqlite"
+    },
+    "dummy": {
+        "enabled": true,
+        "priority": 0
     }
 }
