@@ -20,7 +20,7 @@ is_version_lessthan() {
 prompt_continue() {
     read -r -p "${1} [Y/n] " response
     if [[ ! "$response" =~ ^(|[yY]|[yY][eE][sS])$ ]]; then
-        echo "Exiting the installer per user request."
+        echo "Ok bye."
         exit 0
     fi
 }
