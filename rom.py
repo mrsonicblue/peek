@@ -16,6 +16,10 @@ class Rom:
 
     def read_chunks(self):
         with open(str(self.path), 'rb') as f:
+            # Skip header, if necessary
+            if self.core.rom_header_size > 0:
+                f.read(self.core.rom_header_size)
+
             while True:
                 data = f.read(Rom.BUF_SIZE)
                 if not data:

@@ -11,6 +11,7 @@ class Scanner:
         self.meta_path = pathlib.Path(general['meta_path'])
         self.tabs_path = pathlib.Path(general['tabs_path'])
         self.peek_path = pathlib.Path(general['peek_path'])
+        self.tab_headers = general['tab_headers']
         self.core_white_list = general['core_white_list']
         self.core_black_list = general['core_black_list']
         self.rom_max_size = general['rom_max_size']
@@ -22,13 +23,13 @@ class Scanner:
     def _sources(self, config):
         result = []
 
-        for key, source_cls in sources.all.items():
-            if key not in config:
-                raise Exception("No configuration section for source: " + key)
+        for source_key, source_cls in sources.all.items():
+            if source_key not in config:
+                raise Exception("No configuration section for source: " + source_key)
 
-            source_config = config[key]
+            source_config = config[source_key]
             if source_config['enabled']:
-                result.append((key, source_config['priority'], source_cls(source_config)))
+                result.append((source_key, source_config['priority'], source_cls(source_config)))
         
         result.sort(key=lambda s: s[1])
 
@@ -73,32 +74,42 @@ class Scanner:
         return result
     
     def core(self, core):
-        meta_files = {}
-        for key, _, source in self.sources:
-            meta_path = self.meta_path / key / core.name
-            meta_path.mkdir(parents=True, exist_ok=True)
-            meta_files[key] = { file:True for file in self.just_files(meta_path) }
+        tab_path = self.tabs_path / (core.name + '.txt')
+        with tab_path.open('w', encoding='utf-8') as tab:
+            tab.write('ROM')
+            for header in self.tab_headers:
+                tab.write('\t')
+                tab.write(header)
+            tab.write('\n')
 
-        rom_paths = self.just_files(core.path)
+            meta_files = {}
+            for source_key, _, source in self.sources:
+                meta_path = self.meta_path / source_key / core.name
+                meta_path.mkdir(parents=True, exist_ok=True)
+                meta_files[source_key] = { file:True for file in self.just_files(meta_path) }
 
-        roms = map(lambda p: Rom(p, core), rom_paths)
+            rom_paths = self.just_files(core.path)
 
-        if self.rom_max_size > 0:
-            roms = filter(lambda r: r.stat.st_size <= self.rom_max_size, roms)
-        
-        for rom in roms:
-            print('-- {}'.format(rom.name))
+            roms = map(lambda p: Rom(p, core), rom_paths)
 
-            self.rom(rom, meta_files)
+            if self.rom_max_size > 0:
+                roms = filter(lambda r: r.stat.st_size <= self.rom_max_size, roms)
+            
+            for rom in roms:
+                print('-- {}'.format(rom.name))
 
-        for key, _, source in self.sources:
-            for meta_file in meta_files[key].keys():
-                meta_file.unlink()
+                self.rom(rom, tab, meta_files)
+
+            for source_key, _, source in self.sources:
+                for meta_file in meta_files[source_key].keys():
+                    meta_file.unlink()
     
-    def rom(self, rom, meta_files):
-        for key, _, source in self.sources:
-            meta_path = self.meta_path / key / rom.core.name / (rom.name + ".json")
-            if meta_files[key].pop(meta_path, False):
+    def rom(self, rom, tab, meta_files):
+        merged = {}
+
+        for source_key, _, source in self.sources:
+            meta_path = self.meta_path / source_key / rom.core.name / (rom.name + ".json")
+            if meta_files[source_key].pop(meta_path, False):
                 try:
                     with meta_path.open('r', encoding='utf-8') as f:
                         meta = json.load(f)
@@ -111,11 +122,38 @@ class Scanner:
             mtime = meta.get('mtime', -1)
 
             if rom.stat.st_size != size or rom.stat.st_mtime != mtime:
-                print('--- Updating data for ' + key)
+                print('--- Updating data for ' + source_key)
 
-                meta['size'] = rom.stat.st_size
-                meta['mtime'] = rom.stat.st_mtime
-                meta['data'] = source.rom_data(rom)
+                data = source.rom_data(rom)
+                if data is not None:
+                    meta['size'] = rom.stat.st_size
+                    meta['mtime'] = rom.stat.st_mtime
+                    meta['data'] = data
 
-                with meta_path.open('w', encoding='utf-8') as f:
-                    json.dump(meta, f)
+                    with meta_path.open('w', encoding='utf-8') as f:
+                        json.dump(meta, f)
+            
+            data = meta.get('data', None)
+            if data is not None:
+                for k, v in data.items():
+                    if v is not None:
+                        merged[k] = v
+
+        tab.write(rom.name)
+        for header in self.tab_headers:
+            tab.write('\t')
+
+            value = merged.get(header, None)
+            if value is not None:
+                if isinstance(value, list):
+                    tab.write("|".join(map(lambda s: self.clean(s), value)))
+                else:
+                    tab.write(self.clean(str(value)))
+
+        tab.write('\n')
+
+    def clean(self, s):
+        if s is None:
+            return ""
+        
+        return s.strip().replace(",", "")
