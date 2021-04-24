@@ -1,6 +1,7 @@
 import json
 import pathlib
 import sources
+import subprocess
 from core import Core
 from rom import Rom
 
@@ -75,6 +76,10 @@ class Scanner:
     
     def core(self, core):
         tab_path = self.tabs_path / (core.name + '.txt')
+        self.build_tab(core, tab_path)
+        self.import_tab(core, tab_path)
+
+    def build_tab(self, core, tab_path):
         with tab_path.open('w', encoding='utf-8') as tab:
             tab.write('ROM')
             for header in self.tab_headers:
@@ -151,6 +156,16 @@ class Scanner:
                     tab.write(self.clean(str(value)))
 
         tab.write('\n')
+
+    def import_tab(self, core, tab_path):
+        if not self.peek_path:
+            return
+
+        cmd = [str(self.peek_path), "db", "import", core.name, str(tab_path)]
+        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+        if result.returncode != 0:
+            raise Exception("Import failed with code " + str(result.returncode))
 
     def clean(self, s):
         if s is None:
