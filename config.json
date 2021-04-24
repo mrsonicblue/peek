@@ -5,7 +5,7 @@
         "tabs_path": "/media/fat/peek/tabs",
         "peek_path": "/media/fat/peek/peek",
         "tab_headers": ["Region","Year","Developer","Genre"],
-        "core_white_list": ["NES"],
+        "core_white_list": ["NES", "SNES"],
         "core_black_list": ["hbmame","mame","AO486"],
         "rom_max_size": 1048576
     },

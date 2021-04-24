@@ -52,7 +52,7 @@ def status_update():
     p = 0
     if this.rom_count > 0:
         p = int(100 * this.rom_index / this.rom_count)
-    s = "{}: {}%".format(this.core_name, p)
+    s = "({}/{}) {}: {}%".format(this.core_index, this.core_count, this.core_name, p)
     if s != this.status:
         status_erase()
         this.status = s
@@ -62,6 +62,9 @@ def core(index, count, name):
     this.core_index = index
     this.core_count = count
     this.core_name = name
+    this.rom_index = 0
+    this.rom_count = 0
+    this.rom_name = ""
     status_update()
 
 def rom(index, count, name):
