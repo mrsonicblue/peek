@@ -34,12 +34,12 @@ class OpenVgdbSource:
         self.cur.execute('SELECT romID, regionID FROM ROMs WHERE romHashSHA1 = ?', (rom.sha1().upper(),))
         dbrom = self.cur.fetchone()
         if dbrom is None:
-            return None
+            return {}
 
         self.cur.execute('SELECT releaseDeveloper, releaseGenre, releaseDate FROM RELEASES WHERE romID = ?', (dbrom[0],))
         dbrelease = self.cur.fetchone()
         if dbrelease is None:
-            return None
+            return {}
 
         year = None
         if dbrelease[2] is not None:
