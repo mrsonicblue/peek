@@ -2,6 +2,7 @@ import json
 import pathlib
 import sources
 import subprocess
+import log
 from core import Core
 from rom import Rom
 
@@ -58,7 +59,7 @@ class Scanner:
             core_count = len(cores)
             for core in cores:
                 core_index += 1
-                print('{} of {}: {}'.format(core_index, core_count, core.name))
+                log.core(core_index, core_count, core.name)
 
                 self.core(core)
         finally:
@@ -67,6 +68,8 @@ class Scanner:
                     source.close()
                 except:
                     pass
+        
+        log.status_erase()
 
     def just_files(self, path):
         result = path.iterdir()
@@ -94,14 +97,19 @@ class Scanner:
                 meta_files[source_key] = { file:True for file in self.just_files(meta_path) }
 
             rom_paths = self.just_files(core.path)
-
             roms = map(lambda p: Rom(p, core), rom_paths)
 
             if self.rom_max_size > 0:
                 roms = filter(lambda r: r.stat.st_size <= self.rom_max_size, roms)
-            
+
+            roms = list(roms)
+            roms.sort(key=lambda r: r.name)
+
+            rom_index = 0
+            rom_count = len(roms)
             for rom in roms:
-                print('-- {}'.format(rom.name))
+                rom_index += 1
+                log.rom(rom_index, rom_count, rom.name)
 
                 self.rom(rom, tab, meta_files)
 
@@ -127,7 +135,7 @@ class Scanner:
             mtime = meta.get('mtime', -1)
 
             if rom.stat.st_size != size or rom.stat.st_mtime != mtime:
-                print('--- Updating data for ' + source_key)
+                log.info('Updating data for ' + source_key)
 
                 data = source.rom_data(rom)
                 if data is not None:
