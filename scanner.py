@@ -85,9 +85,15 @@ class Scanner:
         return result
     
     def core(self, core):
+        for _, _, source in self.sources:
+            source.core_start(core)
+
         tab_path = self.tabs_path / (core.name + '.txt')
         self.build_tab(core, tab_path)
         self.import_tab(core, tab_path)
+
+        for _, _, source in self.sources:
+            source.core_end()
 
     def build_tab(self, core, tab_path):
         with tab_path.open('w', encoding='utf-8') as tab:

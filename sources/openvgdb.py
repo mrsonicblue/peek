@@ -19,7 +19,13 @@ class OpenVgdbSource:
         self.ensure_index('ROMs', 'romHashSHA1')
         self.ensure_index('RELEASES', 'romID')
         self.regions = self.get_regions()
-            
+
+    def close(self):
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
+            self.cur = None
+
     def get_regions(self):
         self.cur.execute('SELECT RegionID, RegionName FROM REGIONS')
         return { row[0]:self.parse_list(row[1]) for row in self.cur.fetchall() }
@@ -62,6 +68,9 @@ class OpenVgdbSource:
             r.raise_for_status()
             with io.BytesIO() as mem:
                 mem.write(r.content)
+
+                log.info('Extracting OpenVGDB')
+                
                 with zipfile.ZipFile(mem) as zip:
                     with zip.open('openvgdb.sqlite') as zf, open(str(self.database_path), 'wb') as f:
                         shutil.copyfileobj(zf, f)
@@ -73,7 +82,13 @@ class OpenVgdbSource:
         if index_name not in indexes:
             log.info('Creating database index {}', index_name)
             self.cur.execute("CREATE INDEX " + index_name + " ON " + table + " (" + field + ")")
-    
+
+    def core_start(self, core):
+        pass
+
+    def core_end(self):
+        pass
+
     def rom_data(self, rom):
         self.cur.execute('SELECT romID, regionID FROM ROMs WHERE romHashSHA1 = ?', (rom.sha1().upper(),))
         dbrom = self.cur.fetchone()
@@ -101,9 +116,3 @@ class OpenVgdbSource:
             'Genre': genre,
             'Region': self.regions.get(dbrom[1], None)
         }
-
-    def close(self):
-        if self.conn is not None:
-            self.conn.close()
-            self.conn = None
-            self.cur = None
