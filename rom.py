@@ -1,4 +1,5 @@
 import hashlib
+import zipfile
 import zlib
 
 class Rom:
@@ -14,24 +15,38 @@ class Rom:
         self._md5 = None
         self._sha1 = None
 
-    def read_chunks(self):
-        with open(str(self.path), 'rb') as f:
-            # Skip header, if necessary
-            if self.core.rom_header_size > 0:
-                f.read(self.core.rom_header_size)
+    def read_chunks(self, f):
+        # Skip header, if necessary
+        if self.core.rom_header_size > 0:
+            f.read(self.core.rom_header_size)
 
-            while True:
-                data = f.read(Rom.BUF_SIZE)
-                if not data:
-                    break
+        while True:
+            chunk = f.read(Rom.BUF_SIZE)
+            if not chunk:
+                break
 
-                yield data
+            yield chunk
+
+    def open_file(self):
+        if self.path.suffix == '.zip':
+            with zipfile.ZipFile(str(self.path)) as zip:
+                zipfiles = zip.namelist()
+                if len(zipfiles) == 0:
+                    raise Exception('No files in archive')
+
+                with zip.open(zipfiles[0]) as f:
+                    for chunk in self.read_chunks(f):
+                        yield chunk
+        else:
+            with open(str(self.path), 'rb') as f:
+                for chunk in self.read_chunks(f):
+                    yield chunk
 
     def hash(self):
         crc32 = 0
         md5 = hashlib.md5()
         sha1 = hashlib.sha1()
-        for chunk in self.read_chunks():
+        for chunk in self.open_file():
             crc32 = zlib.crc32(chunk, crc32)
             md5.update(chunk)
             sha1.update(chunk)
