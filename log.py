@@ -49,10 +49,13 @@ def status_write():
     print(this.status, end="", flush=True)
 
 def status_update():
-    p = 0
-    if this.rom_count > 0:
-        p = int(100 * this.rom_index / this.rom_count)
-    s = "({}/{}) {}: {}%".format(this.core_index, this.core_count, this.core_name, p)
+    if this.core_count == 0:
+        s = ""
+    else:
+        p = 0
+        if this.rom_count > 0:
+            p = int(100 * this.rom_index / this.rom_count)
+        s = "({}/{}) {}: {}%".format(this.core_index, this.core_count, this.core_name, p)
     if s != this.status:
         status_erase()
         this.status = s
