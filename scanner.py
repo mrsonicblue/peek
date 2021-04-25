@@ -18,6 +18,9 @@ class Scanner:
         self.core_black_list = general['core_black_list']
         self.rom_max_size = general['rom_max_size']
 
+        self.meta_path.mkdir(parents=True, exist_ok=True)
+        self.tabs_path.mkdir(parents=True, exist_ok=True)
+
         self.sources = self._sources(config)
         if len(self.sources) == 0:
             raise Exception("No configured sources")
