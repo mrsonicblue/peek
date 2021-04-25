@@ -19,7 +19,7 @@ bash <(curl -ks https://raw.githubusercontent.com/mrsonicblue/peek/master/instal
 ```
 
 If this is successful, you will still need to [import](#import) data to make the [facet filter](#facet-filter) work.
-A simple [scanner](https://github.com/mrsonicblue/peek-scan) is bundled in to help simplify this process.
+A simple [scanner](https://github.com/mrsonicblue/peek-scan-2) is bundled in to help simplify this process.
 
 If you wish to build the application from source or if you wish to customize it, continue on through this section.
 
