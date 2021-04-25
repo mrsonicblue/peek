@@ -39,8 +39,11 @@ class Scanner:
 
     def run(self):
         try:
-            for _, _, source in self.sources:
+            for source_key, _, source in self.sources:
+                log.info("Opening source: {}", source_key)
                 source.open()
+
+            log.info('Scanning cores')
 
             core_paths = self.games_path.iterdir()
             core_paths = filter(lambda p: p.is_dir(), core_paths)
@@ -61,15 +64,16 @@ class Scanner:
                 core_index += 1
                 log.core(core_index, core_count, core.name)
 
-                self.core(core)
+                self.core(core)            
         finally:
-            for _, _, source in self.sources:
+            for source_key, _, source in self.sources:
+                log.info("Closing source: {}", source_key)
                 try:
                     source.close()
                 except:
                     pass
         
-        log.status_erase()
+            log.status_erase()
 
     def just_files(self, path):
         result = path.iterdir()
@@ -135,9 +139,12 @@ class Scanner:
             mtime = meta.get('mtime', -1)
 
             if rom.stat.st_size != size or rom.stat.st_mtime != mtime:
-                log.info('Updating data for ' + source_key)
-
-                data = source.rom_data(rom)
+                data = None
+                try:
+                    data = source.rom_data(rom)
+                except Exception as e:
+                    log.warn('Error getting data for {} in source {}', rom.name, source_key)
+                    log.warn(e)
                 if data is not None:
                     meta['size'] = rom.stat.st_size
                     meta['mtime'] = rom.stat.st_mtime
