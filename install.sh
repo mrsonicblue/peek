@@ -75,7 +75,7 @@ echo "OK"
 
 echo -n "Linking scanner... "
 if [[ ! -f "${INSTALL_PATH}/scan" ]]; then
-    ln -s "${INSTALL_PATH}/scan-lib/Peek.Scan" "${INSTALL_PATH}/scan" || handle_error "${LINENO}: Unable to create symbolic link from ${INSTALL_PATH}/scan-lib/Peek.Scan to ${INSTALL_PATH}/scan. Check file path and permissions."
+    ln -s "${INSTALL_PATH}/scan-inc/main.py" "${INSTALL_PATH}/scan" || handle_error "${LINENO}: Unable to create symbolic link from ${INSTALL_PATH}/scan-lib/Peek.Scan to ${INSTALL_PATH}/scan. Check file path and permissions."
 fi
 echo "OK"
 
