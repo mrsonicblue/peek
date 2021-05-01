@@ -70,7 +70,7 @@ class OpenVgdbSource:
                 mem.write(r.content)
 
                 log.info('Extracting OpenVGDB')
-                
+
                 with zipfile.ZipFile(mem) as zip:
                     with zip.open('openvgdb.sqlite') as zf, open(str(self.database_path), 'wb') as f:
                         shutil.copyfileobj(zf, f)
@@ -90,7 +90,7 @@ class OpenVgdbSource:
         pass
 
     def rom_data(self, rom):
-        self.cur.execute('SELECT romID, regionID FROM ROMs WHERE romHashSHA1 = ?', (rom.sha1().upper(),))
+        self.cur.execute('SELECT romID, regionID FROM ROMs WHERE romHashSHA1 = ?', (rom.sha1(False).upper(),))
         dbrom = self.cur.fetchone()
         if dbrom is None:
             return {}
