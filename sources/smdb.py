@@ -61,7 +61,7 @@ class SmdbSource:
 
         if core.name == 'NES':
             self.map = self.read_map('EverDrive N8 & PowerPak SMDB.txt')
-            self.mapper = lambda p: p
+            self.mapper = self.nes_mapper
 
         if self.map is None:
             log.warn('No smdb map exists for core {}', core.name)
@@ -90,12 +90,40 @@ class SmdbSource:
         if self.map is None:
             return None
 
-        paths = self.map.get(rom.sha1(), None)
+        paths = self.map.get(rom.sha1(True), None)
         
         result = {}
         if paths is not None:
             result['Paths'] = paths
+
+            paths = SmdbSource.parse_paths(paths)
+            self.mapper(rom, paths, result)
         else:
             log.info('Missing: {}', rom.name)
 
         return result
+
+    @staticmethod
+    def parse_paths(paths):
+        return list(map(SmdbSource.parse_path, paths))
+
+    @staticmethod
+    def parse_path(path):
+        return list(map(SmdbSource.parse_path_bit, path.split('/')))
+
+    @staticmethod
+    def parse_path_bit(bit):
+        return {
+            'name': bit
+        }
+
+    def nes_mapper(self, rom, paths, result):
+        for path in paths:
+            regions = []
+            if path[1]['name'].startswith('1 US '):
+                regions.append('USA')
+
+            if len(regions) > 0:
+                result['Region'] = regions
+            
+            result['Wee'] = 'Ha'
