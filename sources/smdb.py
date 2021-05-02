@@ -94,9 +94,8 @@ class SmdbSource:
         
         result = {}
         if paths is not None:
-            result['Paths'] = paths
-
             paths = SmdbSource.parse_paths(paths)
+            log.debug('{}-------------------------', rom.name)
             self.mapper(rom, paths, result)
         else:
             log.info('Missing: {}', rom.name)
@@ -113,17 +112,61 @@ class SmdbSource:
 
     @staticmethod
     def parse_path_bit(bit):
-        return {
-            'name': bit
+        result = {
+            'full': bit
         }
 
-    def nes_mapper(self, rom, paths, result):
-        for path in paths:
-            regions = []
-            if path[1]['name'].startswith('1 US '):
-                regions.append('USA')
+        first_word = bit.split(' ', 1)
+        if first_word[0].isnumeric():
+            result['index'] = int(first_word[0])
+            bit = first_word[1]
+        else:
+            result['index'] = None
 
-            if len(regions) > 0:
-                result['Region'] = regions
-            
-            result['Wee'] = 'Ha'
+        result['name'] = bit
+
+        return result
+
+    def nes_mapper(self, rom, paths, result):
+        regions = []
+        genres = []
+        year = None
+        bestofs = []
+        for path in paths:
+            used = False
+
+            if len(path) > 1:
+                if path[1]['name'] == 'Game Series Collections':
+                    if len(path) > 2:
+                        if path[2]['name'] == 'Chronological':
+                            if len(path) > 3:
+                                m = re.search(r' ([0-9]{4})$', path[3]['name'])
+                                if m:
+                                    year = m.group(1)
+                                    used = True
+                        elif path[2]['name'] == 'Best-Of Lists':
+                            if len(path) > 3:
+                                bestofs.append(path[3]['full'])
+                                used = True
+                else:
+                    m = re.match(r'^(.*) - [A-Z]-[A-Z]$', path[1]['name'])
+                    if m:
+                        regions.append(m.group(1))
+                        used = True
+
+            if not used:
+                log.debug('FELL THRU: {}', "/".join(map(lambda p: p['full'], path)))
+
+        if len(regions) > 0:
+            result['Region'] = regions
+
+        if len(genres) > 0:
+            result['Genre'] = genres
+
+        if year is not None:
+            result['Year'] = year
+
+        if len(bestofs) > 0:
+            result['Best-Of'] = bestofs
+
+        log.debug(result)
