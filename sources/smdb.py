@@ -11,7 +11,7 @@ class SmdbSource:
         self.conn = None
         self.database_path = pathlib.Path(config['database_path'])
         self.map = None
-        self.mapper = None
+        self.map_rules = None
 
     def open(self):
         self.ensure_database()
@@ -57,11 +57,24 @@ class SmdbSource:
 
     def core_start(self, core):
         self.map = None
-        self.mapper = None
+        self.map_rules = None
+
+        full = lambda bit: bit['full']
+        name_equals = lambda value: lambda bit: SmdbSource.bit_equals(bit, 'name', value)
+        name_search = lambda value: lambda bit: SmdbSource.bit_search(bit, 'name', value)
+        name_extract = lambda value: lambda bit: SmdbSource.bit_extract(bit, 'name', value)
 
         if core.name == 'NES':
             self.map = self.read_map('EverDrive N8 & PowerPak SMDB.txt')
-            self.mapper = self.nes_mapper
+            self.map_rules = [
+                ('Year',      [None, name_equals('Game Series Collections'), name_equals('Chronological'), name_extract(r' ([0-9]{4})$')]),
+                ('Developer', [None, name_equals('Game Series Collections'), name_equals('Developer'), name_extract(r'^Developer (.*)$')]),
+                ('Publisher', [None, name_equals('Game Series Collections'), name_equals('Developer'), name_extract(r'^Publisher (.*)$')]),
+                ('Genre',     [None, name_equals('Game Series Collections'), name_equals('Genre'), full]),
+                ('Franchise', [None, name_equals('Game Series Collections'), name_equals('Franchise'), full]),
+                ('List',      [None, name_equals('Game Series Collections'), name_equals('Best-Of Lists'), full]),
+                ('Region',    [None, name_extract(r'^(.*) - [A-Z]-[A-Z]$')])
+            ]
 
         if self.map is None:
             log.warn('No smdb map exists for core {}', core.name)
@@ -95,8 +108,9 @@ class SmdbSource:
         result = {}
         if paths is not None:
             paths = SmdbSource.parse_paths(paths)
-            log.debug('{}-------------------------', rom.name)
-            self.mapper(rom, paths, result)
+            #log.debug('{}-------------------------', rom.name)
+            self.run_map_rules(rom, paths, result)
+            #log.debug(result)
         else:
             log.info('Missing: {}', rom.name)
 
@@ -127,46 +141,42 @@ class SmdbSource:
 
         return result
 
-    def nes_mapper(self, rom, paths, result):
-        regions = []
-        genres = []
-        year = None
-        bestofs = []
+    @staticmethod
+    def bit_equals(bit, key, value):
+        return bit[key] == value
+
+    @staticmethod
+    def bit_search(bit, key, expr):
+        m = re.search(expr, bit[key])
+        return m is not None
+
+    @staticmethod
+    def bit_extract(bit, key, expr):
+        m = re.search(expr, bit[key])
+        if m is None:
+            return None
+        return m.group(1)
+
+    def run_map_rules(self, rom, paths, result):
         for path in paths:
             used = False
+            for result_key, rule in self.map_rules:
+                if len(path) < len(rule):
+                    continue
 
-            if len(path) > 1:
-                if path[1]['name'] == 'Game Series Collections':
-                    if len(path) > 2:
-                        if path[2]['name'] == 'Chronological':
-                            if len(path) > 3:
-                                m = re.search(r' ([0-9]{4})$', path[3]['name'])
-                                if m:
-                                    year = m.group(1)
-                                    used = True
-                        elif path[2]['name'] == 'Best-Of Lists':
-                            if len(path) > 3:
-                                bestofs.append(path[3]['full'])
-                                used = True
-                else:
-                    m = re.match(r'^(.*) - [A-Z]-[A-Z]$', path[1]['name'])
-                    if m:
-                        regions.append(m.group(1))
-                        used = True
+                value = None
+                for path_bit, rule_bit in zip(path, rule):
+                    if rule_bit is None:
+                        value = True
+                    else:
+                        value = rule_bit(path_bit)
+                    if not value:
+                        break
 
-            if not used:
-                log.debug('FELL THRU: {}', "/".join(map(lambda p: p['full'], path)))
+                if value:
+                    result.setdefault(result_key, []).append(str(value))
+                    used = True
+                    break
 
-        if len(regions) > 0:
-            result['Region'] = regions
-
-        if len(genres) > 0:
-            result['Genre'] = genres
-
-        if year is not None:
-            result['Year'] = year
-
-        if len(bestofs) > 0:
-            result['Best-Of'] = bestofs
-
-        log.debug(result)
+            #if not used:
+            #    log.debug('FELL THRU: {}', "/".join(map(lambda p: p['full'], path)))

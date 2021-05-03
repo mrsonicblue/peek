@@ -10,7 +10,7 @@
         "rom_max_size": 1048576
     },
     "openvgdb": {
-        "enabled": false,
+        "enabled": true,
         "priority": 1,
         "database_path": "/media/fat/peek/openvgdb.sqlite"
     },
