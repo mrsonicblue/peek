@@ -4,18 +4,24 @@
         "meta_path": "/media/fat/peek/meta",
         "tabs_path": "/media/fat/peek/tabs",
         "peek_path": "/media/fat/peek/peek",
-        "tab_headers": ["Region","Year","Developer","Genre"],
+        "tab_headers": ["Region","Year","Developer","Publisher","Genre","Rating"],
         "core_white_list": ["NES"],
         "core_black_list": ["hbmame","mame","AO486"],
         "rom_max_size": 1048576
     },
     "openvgdb": {
-        "enabled": true,
+        "enabled": false,
         "priority": 1,
         "database_path": "/media/fat/peek/openvgdb.sqlite"
     },
-    "smdb": {
+    "screenscraper": {
         "enabled": true,
+        "priority": 3,
+        "username": "XXX",
+        "password": "YYY"
+    },
+    "smdb": {
+        "enabled": false,
         "priority": 2,
         "database_path": "/media/fat/peek/smdb"
     },
