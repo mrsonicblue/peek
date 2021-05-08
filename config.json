@@ -7,7 +7,7 @@
         "tab_headers": ["Region","Year","Developer","Publisher","Genre","Rating"],
         "core_white_list": ["NES", "SNES", "GBA", "GAMEBOY", "Genesis", "ATARI2600", "NeoGeo"],
         "core_black_list": ["hbmame","mame","AO486"],
-        "rom_max_size": 1048576
+        "rom_max_size": 104857600
     },
     "openvgdb": {
         "enabled": false,
