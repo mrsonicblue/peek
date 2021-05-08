@@ -2,6 +2,7 @@ import json
 import pathlib
 import sources
 import subprocess
+import traceback
 import log
 from core import Core
 from rom import Rom
@@ -75,7 +76,8 @@ class Scanner:
                     source.close()
                 except:
                     pass
-        
+
+            log.info('Scan completed successfully')
             log.status_erase()
 
     def just_files(self, path):
@@ -154,6 +156,7 @@ class Scanner:
                 except Exception as e:
                     log.warn('Error getting data for {} in source {}', rom.name, source_key)
                     log.warn(e)
+                    # log.warn(traceback.format_exc())
                 if data is not None:
                     meta['size'] = rom.stat.st_size
                     meta['mtime'] = rom.stat.st_mtime

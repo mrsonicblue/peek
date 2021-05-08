@@ -60,7 +60,7 @@ class ScreenScraperSource:
             'romnom':rom.name,
             'romtaille':str(rom.stat.st_size)
         }
-        log.info(params)
+        # log.info(params)
         with self.session.get('https://www.screenscraper.fr/api2/jeuInfos.php', params=params) as r:
             # Rom not found
             if r.status_code == 404:
@@ -119,7 +119,7 @@ class ScreenScraperSource:
             if rating:
                 result['Rating'] = rating
 
-            log.info(result)
+            # log.info(result)
 
             return result
 
