@@ -92,7 +92,7 @@ class SmdbSource:
         else:
             self.map_rules.append(('List', [None, name_equals('Game Series Collections'), name_equals('Best-Of Lists'), full]))
 
-        self.map_rules.append(('Region',    [None, name_extract(r'^(.*) - [0-9A-Z]-?[0-9A-Z]?$')]))
+        self.map_rules.append(('Region', [None, name_extract(r'^(.*) - [0-9A-Z]-?[0-9A-Z]?$')]))
 
         if self.map is None:
             log.warn('No smdb map exists for core {}', core.name)
