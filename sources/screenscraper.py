@@ -107,6 +107,9 @@ class ScreenScraperSource:
                 result['Players'] = players
 
             date = self.clean(self.try_path(game, ['rom', 'dates', 'date_us']))
+            if not date:
+                date = self.clean(self.try_path(game, ['dates', ('region', 'us'), 'text']))
+
             if date:
                 m = re.search('([0-9]{4})', date)
                 if m is not None:
