@@ -66,15 +66,33 @@ class SmdbSource:
 
         if core.name == 'NES':
             self.map = self.read_map('EverDrive N8 & PowerPak SMDB.txt')
-            self.map_rules = [
-                ('Year',      [None, name_equals('Game Series Collections'), name_equals('Chronological'), name_extract(r' ([0-9]{4})$')]),
-                ('Developer', [None, name_equals('Game Series Collections'), name_equals('Developer'), name_extract(r'^Developer (.*)$')]),
-                ('Publisher', [None, name_equals('Game Series Collections'), name_equals('Developer'), name_extract(r'^Publisher (.*)$')]),
-                ('Genre',     [None, name_equals('Game Series Collections'), name_equals('Genre'), full]),
-                ('Franchise', [None, name_equals('Game Series Collections'), name_equals('Franchise'), full]),
-                ('List',      [None, name_equals('Game Series Collections'), name_equals('Best-Of Lists'), full]),
-                ('Region',    [None, name_extract(r'^(.*) - [A-Z]-[A-Z]$')])
-            ]
+        elif core.name == 'SNES':
+            self.map = self.read_map('Super EverDrive & SD2SNES SMDB.txt')
+        elif core.name == 'GBA':
+            self.map = self.read_map('EverDrive GBA SMDB.txt')
+        elif core.name == 'GAMEBOY':
+            self.map = self.read_map('EverDrive GB SMDB.txt')
+        elif core.name == 'Genesis':
+            self.map = self.read_map('Mega EverDrive SMDB.txt')
+        elif core.name == 'ATARI2600':
+            self.map = self.read_map('Atari 2600 SMDB.txt')
+        
+        self.map_rules = [
+            ('Year',      [None, name_equals('Game Series Collections'), name_equals('Chronological'), name_extract(r' ([0-9]{4})$')]),
+            ('Developer', [None, name_equals('Game Series Collections'), name_equals('Developer'), name_extract(r'^Developer (.*)$')]),
+            ('Publisher', [None, name_equals('Game Series Collections'), name_equals('Developer'), name_extract(r'^Publisher (.*)$')]),
+            ('Genre',     [None, name_equals('Game Series Collections'), name_equals('Genre'), full]),
+            ('Franchise', [None, name_equals('Game Series Collections'), name_equals('Franchise'), full])
+        ]
+
+        if core.name == 'GBA':
+            self.map_rules.append(('List', [None, name_equals('Game Series Collections'), name_equals('Best-of Lists'), full]))
+        elif core.name == 'GAMEBOY':
+            self.map_rules.append(('List', [None, name_equals('Game Series Collections'), name_equals('Best-of Lists'), full]))
+        else:
+            self.map_rules.append(('List', [None, name_equals('Game Series Collections'), name_equals('Best-Of Lists'), full]))
+
+        self.map_rules.append(('Region',    [None, name_extract(r'^(.*) - [0-9A-Z]-?[0-9A-Z]?$')]))
 
         if self.map is None:
             log.warn('No smdb map exists for core {}', core.name)
@@ -112,7 +130,7 @@ class SmdbSource:
             self.run_map_rules(rom, paths, result)
             #log.debug(result)
         else:
-            log.info('Missing: {}', rom.name)
+            log.info('Not found: {}', rom.name)
 
         return result
 
@@ -131,7 +149,7 @@ class SmdbSource:
         }
 
         first_word = bit.split(' ', 1)
-        if first_word[0].isnumeric():
+        if len(first_word) == 2 and first_word[0].isnumeric():
             result['index'] = int(first_word[0])
             bit = first_word[1]
         else:
@@ -174,7 +192,10 @@ class SmdbSource:
                         break
 
                 if value:
-                    result.setdefault(result_key, []).append(str(value))
+                    value = str(value)
+                    values = result.setdefault(result_key, [])
+                    if value not in values:
+                        values.append(value)
                     used = True
                     break
 
