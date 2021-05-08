@@ -127,7 +127,7 @@ class ScreenScraperSource:
         if not v or type(v) is not str:
             return v
         
-        return v.replace('/', '-')
+        return v.strip().replace('/', '-').replace('&nbsp;', ' ')
 
     def try_path(self, d, path):
         for bit in path:
