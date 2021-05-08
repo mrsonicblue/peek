@@ -88,7 +88,7 @@ class SmdbSource:
         if core.name == 'GBA':
             self.map_rules.append(('List', [None, name_equals('Game Series Collections'), name_equals('Best-of Lists'), full]))
         elif core.name == 'GAMEBOY':
-            self.map_rules.append(('List', [None, name_equals('Game Series Collections'), name_equals('Best-of Lists'), full]))
+            self.map_rules.append(('List', [None, name_equals('Game Series Collections'), name_equals('Best-of Lists'), None, full]))
         else:
             self.map_rules.append(('List', [None, name_equals('Game Series Collections'), name_equals('Best-Of Lists'), full]))
 
