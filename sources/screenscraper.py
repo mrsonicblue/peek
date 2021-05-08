@@ -56,7 +56,6 @@ class ScreenScraperSource:
             'crc':rom.crc32(),
             'md5':rom.md5(),
             'sha1':rom.sha1(),
-            'systemeid':'3',
             'romtype':'rom',
             'romnom':rom.name,
             'romtaille':str(rom.stat.st_size)
