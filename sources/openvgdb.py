@@ -61,7 +61,7 @@ class OpenVgdbSource:
         if self.database_path.is_file():
             return
 
-        log.info('Downloading OpenVGDB')
+        log.crit('Downloading OpenVGDB')
 
         url = self.get_database_url()
         with requests.get(url) as r:
@@ -69,7 +69,7 @@ class OpenVgdbSource:
             with io.BytesIO() as mem:
                 mem.write(r.content)
 
-                log.info('Extracting OpenVGDB')
+                log.crit('Extracting OpenVGDB')
 
                 with zipfile.ZipFile(mem) as zip:
                     with zip.open('openvgdb.sqlite') as zf, open(str(self.database_path), 'wb') as f:

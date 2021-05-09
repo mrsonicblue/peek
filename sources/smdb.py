@@ -23,7 +23,7 @@ class SmdbSource:
         if self.database_path.is_dir():
             return
 
-        log.info('Downloading Hardware Target Game Database')
+        log.crit('Downloading Hardware Target Game Database')
         try:
             self.database_path.mkdir(parents=True, exist_ok=True)
 
@@ -33,7 +33,7 @@ class SmdbSource:
                 with io.BytesIO() as mem:
                     mem.write(r.content)
 
-                    log.info('Extracting Hardware Target Game Database')
+                    log.crit('Extracting Hardware Target Game Database')
 
                     with zipfile.ZipFile(mem) as zip:
                         for name in zip.namelist():
@@ -129,8 +129,6 @@ class SmdbSource:
             #log.debug('{}-------------------------', rom.name)
             self.run_map_rules(rom, paths, result)
             #log.debug(result)
-        else:
-            log.info('Not found: {}', rom.name)
 
         return result
 
@@ -199,5 +197,5 @@ class SmdbSource:
                     used = True
                     break
 
-            #if not used:
-            #    log.debug('FELL THRU: {}', "/".join(map(lambda p: p['full'], path)))
+            # if not used:
+            #     log.debug('FELL THRU: {}', "/".join(map(lambda p: p['full'], path)))

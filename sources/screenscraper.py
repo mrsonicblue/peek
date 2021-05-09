@@ -8,6 +8,7 @@ class ScreenScraperSource:
     def __init__(self, config):
         self.username = config['username']
         self.password = config['password']
+        self.stop = False
 
     def open(self):
         s = requests.Session()
@@ -52,6 +53,9 @@ class ScreenScraperSource:
         pass
 
     def rom_data(self, rom):
+        if self.stop:
+            return None
+
         params = {
             'crc':rom.crc32(),
             'md5':rom.md5(),
@@ -60,8 +64,14 @@ class ScreenScraperSource:
             'romnom':rom.name,
             'romtaille':str(rom.stat.st_size)
         }
-        # log.info(params)
+        # log.debug(params)
         with self.session.get('https://www.screenscraper.fr/api2/jeuInfos.php', params=params) as r:
+            # Server told us to stop
+            if r.status_code >= 423:
+                log.error('The ScreenScraper API has returned a critical error. You may have reached your API limit for today. You can try again by re-running the scanner.')
+                self.stop = True
+                return None
+
             # Rom not found
             if r.status_code == 404:
                 return {}
@@ -119,7 +129,7 @@ class ScreenScraperSource:
             if rating:
                 result['Rating'] = rating
 
-            # log.info(result)
+            # log.debug(result)
 
             return result
 

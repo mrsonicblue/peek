@@ -19,6 +19,8 @@ class Scanner:
         self.core_black_list = general['core_black_list']
         self.rom_max_size = general['rom_max_size']
 
+        log.set_level(general['log_level'])
+
         self.meta_path.mkdir(parents=True, exist_ok=True)
         self.tabs_path.mkdir(parents=True, exist_ok=True)
 
@@ -28,6 +30,7 @@ class Scanner:
 
     def _sources(self, config):
         result = []
+        disabled = []
 
         for source_key, source_cls in sources.all.items():
             if source_key not in config:
@@ -36,18 +39,24 @@ class Scanner:
             source_config = config[source_key]
             if source_config['enabled']:
                 result.append((source_key, source_config['priority'], source_cls(source_config)))
+            else:
+                disabled.append(source_key)
         
         result.sort(key=lambda s: s[1])
+
+        log.crit('Enabled sources: {}', ", ".join(map(lambda s: s[0], result)))
+        log.info('Disabled sources: {}', ", ".join(disabled))
+        log.info('Source configuration can be changed in config.json')
 
         return result
 
     def run(self):
         try:
             for source_key, _, source in self.sources:
-                log.info("Opening source: {}", source_key)
+                log.crit("Opening source: {}", source_key)
                 source.open()
 
-            log.info('Scanning cores')
+            log.crit('Beginning scan')
 
             core_paths = self.games_path.iterdir()
             core_paths = filter(lambda p: p.is_dir(), core_paths)
@@ -71,13 +80,13 @@ class Scanner:
                 self.core(core)            
         finally:
             for source_key, _, source in self.sources:
-                log.info("Closing source: {}", source_key)
+                log.crit("Closing source: {}", source_key)
                 try:
                     source.close()
                 except:
                     pass
 
-            log.info('Scan completed successfully')
+            log.crit('Scan completed successfully')
             log.status_erase()
 
     def just_files(self, path):
@@ -134,7 +143,7 @@ class Scanner:
     
     def rom(self, rom, tab, meta_files):
         merged = {}
-
+        empty = []
         for source_key, _, source in self.sources:
             meta_path = self.meta_path / source_key / rom.core.name / (rom.name + ".json")
             if meta_files[source_key].pop(meta_path, False):
@@ -153,6 +162,8 @@ class Scanner:
                 data = None
                 try:
                     data = source.rom_data(rom)
+                    if data is not None and len(data) == 0:
+                        empty.append(source_key)
                 except Exception as e:
                     log.warn('Error getting data for {} in source {}', rom.name, source_key)
                     log.warn(e)
@@ -170,6 +181,9 @@ class Scanner:
                 for k, v in data.items():
                     if v is not None:
                         merged[k] = v
+
+        if len(empty) > 0:
+            log.info('No data returned by {} for rom "{}"', ", ".join(empty), rom.name)
 
         tab.write(rom.name)
         for header in self.tab_headers:

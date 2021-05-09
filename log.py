@@ -7,6 +7,7 @@ INFORMATION = 3
 DEBUG = 4
 
 this = sys.modules[__name__]
+this.level = 2
 this.status = ""
 this.core_index = 0
 this.core_count = 0
@@ -15,7 +16,17 @@ this.rom_index = 0
 this.rom_count = 0
 this.rom_name = ""
 
+def set_level(level):
+    level = int(level)
+    if level < 0 or level > 4:
+        raise Exception('Log level must be 0 (critical), 1 (error), 2 (warning), 3 (information), or 4 (debug)')
+
+    this.level = level
+
 def _w(level, s, *args):
+    if this.level < level:
+        return
+
     if len(args) > 0:
         s = s.format(*args)
 
