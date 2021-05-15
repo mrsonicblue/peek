@@ -53,15 +53,29 @@ Each source has its own configuration section. All contain the following setting
 
 ### ScreenScraper
 
-TODO
+An account on the [ScreenScraper](https://www.screenscraper.fr/) website is required for this source.
+
+The source-specific settings are:
+
+* `username`: The username for your ScreenScraper account.
+* `password`: The password for your ScreenScraper account.
 
 ### OpenVGDB
 
-TODO
+The [OpenVGDB](https://github.com/OpenVGDB/OpenVGDB) database is downloaded and referenced for this source.
+
+The source-specific settings are:
+
+* `database_path`: The absolute path to where the database is downloaded.
 
 ### SMDB
 
-TODO
+The [Hardware Target Game Database](https://github.com/frederic-mahe/Hardware-Target-Game-Database) project's
+SMDB files are downloaded and referenced for this source.
+
+The source-specific settings are:
+
+* `database_path`: The absolute path to where the SMDB files are downloaded.
 
 ### Dummy
 
