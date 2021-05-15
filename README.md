@@ -53,7 +53,8 @@ Each source has its own configuration section. All contain the following setting
 
 ### ScreenScraper
 
-An account on the [ScreenScraper](https://www.screenscraper.fr/) website is required for this source.
+The [ScreenScraper](https://www.screenscraper.fr/) API is referenced for this source. An account on the 
+ScreenScraper website is required for this source.
 
 The source-specific settings are:
 
