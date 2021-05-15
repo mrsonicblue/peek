@@ -1,4 +1,5 @@
 S99peek eol=lf
+config.json eol=lf
 *.c eol=lf
 *.py eol=lf
 *.sh eol=lf
