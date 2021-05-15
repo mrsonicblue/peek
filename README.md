@@ -48,8 +48,8 @@ Some have more coverage for ROMs. Some have unique data. Some require less set u
 
 Each source has its own configuration section. All contain the following settings:
 
-* `enabled`: Enables or disables the source
-* `priority`: Controls the priority for duplicate values returned by multiple sources
+* `enabled`: Enables or disables the source.
+* `priority`: Controls the priority for duplicate values returned by multiple sources.
 
 ### ScreenScraper
 
