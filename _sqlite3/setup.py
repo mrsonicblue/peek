@@ -18,7 +18,7 @@ module = Extension('_sqlite3',
     ])
 
 setup (name = 'See Quill Lite Three',
-    version = '3.5.2',
+    version = '3.9.6',
     description = 'SQLite moved out',
     author = 'Eric Schneider',
     author_email = 'mr.sonicblue@gmail.com',

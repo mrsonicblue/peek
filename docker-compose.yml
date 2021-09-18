@@ -1,4 +1,4 @@
-# This can be run with: docker-compose run --rm build make
+# This can be run with: docker-compose run --rm build bash
 version: '3'
 services:
   build:

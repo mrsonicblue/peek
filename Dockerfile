@@ -10,23 +10,6 @@ RUN set -ex; \
 
 WORKDIR /build
 
-# OpenSSL
-RUN set -ex; \
-    wget --no-verbose https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_0_2k.tar.gz; \
-    apt remove -y libssl-dev libssl1.0.2; \
-    tar xfz OpenSSL_1_0_2k.tar.gz; \
-    rm OpenSSL_1_0_2k.tar.gz; \
-    mv openssl-OpenSSL_1_0_2k openssl; \
-    cd openssl; \
-    ./config shared; \
-    make; \
-    make install;
-
-# Link OpenSSL to standard lib location
-RUN set -ex; \
-    ln -s /usr/local/ssl/lib/libcrypto.so.1.0.0 /usr/lib/arm-linux-gnueabihf/libcrypto.so.1.0.0; \
-    ln -s /usr/local/ssl/lib/libssl.so.1.0.0 /usr/lib/arm-linux-gnueabihf/libssl.so.1.0.0;
-
 # SQLite
 RUN set -ex; \
     wget --no-verbose https://www.sqlite.org/src/tarball/sqlite.tar.gz?r=version-3.35.4 -O sqlite.tar.gz; \
@@ -38,20 +21,14 @@ RUN set -ex; \
 
 # Python 3
 RUN set -ex; \
-    wget --no-verbose https://www.python.org/ftp/python/3.5.2/Python-3.5.2.tgz; \
-    tar xfz Python-3.5.2.tgz; \
-    rm Python-3.5.2.tgz; \
-    mv Python-3.5.2 python3; \
+    wget --no-verbose https://www.python.org/ftp/python/3.9.6/Python-3.9.6.tgz; \
+    tar xfz Python-3.9.6.tgz; \
+    rm Python-3.9.6.tgz; \
+    mv Python-3.9.6 python3; \
     cd python3; \
     ./configure --prefix=/build/python3-install --disable-ipv6; \
     make; \
     make install;
-
-# # _ssl module
-# COPY _ssl _ssl
-# RUN set -ex; \
-#     cd _ssl; \
-#     /build/python3-install/bin/python3 setup.py install;
 
 # _sqlite3 module
 COPY _sqlite3 _sqlite3
