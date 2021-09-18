@@ -1,8 +1,4 @@
-FROM misterkun/toolchain
-
-# Eliminate bash prompt colors 
-RUN set -ex; \
-    rm -rf /root/.bashrc;
+FROM mrsonicblue/mister-build
 
 # Create build folder
 RUN set -ex; \
@@ -12,12 +8,12 @@ WORKDIR /build
 
 # liblmdb
 RUN set -ex; \
-    wget --no-verbose https://github.com/LMDB/lmdb/archive/LMDB_0.9.28.tar.gz; \
-    tar xfz LMDB_0.9.28.tar.gz; \
-    rm LMDB_0.9.28.tar.gz; \
-    mv lmdb-LMDB_0.9.28 lmdb; \
+    wget --no-verbose https://github.com/LMDB/lmdb/archive/LMDB_0.9.29.tar.gz; \
+    tar xfz LMDB_0.9.29.tar.gz; \
+    rm LMDB_0.9.29.tar.gz; \
+    mv lmdb-LMDB_0.9.29 lmdb; \
     cd lmdb/libraries/liblmdb; \
-    make liblmdb.a;
+    make CC=arm-linux-gnueabihf-gcc AR=arm-linux-gnueabihf-ar liblmdb.a;
 
 # libfuse
 RUN set -ex; \
@@ -27,7 +23,7 @@ RUN set -ex; \
     mv libfuse-fuse-2.9.7 libfuse; \
     cd libfuse; \
     ./makeconf.sh; \
-    ./configure --disable-static; \
+    ./configure --host=arm-linux-gnueabihf --disable-shared; \
     make;
 
 WORKDIR /project
