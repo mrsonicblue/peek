@@ -1,5 +1,4 @@
 # This can be run with: docker-compose run --rm build make
-version: '3'
 services:
   build:
     build: .
