@@ -13,7 +13,7 @@ RUN set -ex; \
     rm LMDB_0.9.29.tar.gz; \
     mv lmdb-LMDB_0.9.29 lmdb; \
     cd lmdb/libraries/liblmdb; \
-    make CC=arm-linux-gnueabihf-gcc AR=arm-linux-gnueabihf-ar liblmdb.a;
+    make CC=arm-none-linux-gnueabihf-gcc AR=arm-none-linux-gnueabihf-ar liblmdb.a;
 
 # libfuse
 RUN set -ex; \
@@ -23,7 +23,7 @@ RUN set -ex; \
     mv libfuse-fuse-2.9.7 libfuse; \
     cd libfuse; \
     ./makeconf.sh; \
-    ./configure --host=arm-linux-gnueabihf --disable-shared; \
+    ./configure --host=arm-none-linux-gnueabihf --disable-shared; \
     make;
 
 WORKDIR /project
