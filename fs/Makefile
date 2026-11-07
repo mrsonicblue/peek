@@ -1,5 +1,5 @@
 SHELL = /bin/bash -o pipefail
-BASE = arm-linux-gnueabihf
+BASE = arm-none-linux-gnueabihf
 
 CC = $(BASE)-gcc
 LD = $(BASE)-ld
