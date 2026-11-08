@@ -21,6 +21,9 @@
 // Path for games directory
 #define GAMES_PATH "/media/fat/games"
 
+// Path for sending commands to rotation service
+#define SPIN_CMD_PATH "/tmp/spin_cmd"
+
 // Mount directory name to use
 // NOTE: single ticks (') not allowed in mount name
 #define MOUNT_NAME "### Peek ###"
@@ -64,6 +67,35 @@ void shutdown()
 		return;
 
 	_terminated = 1;
+}
+
+int sendspincmd(char cmd)
+{
+    int fd = open(SPIN_CMD_PATH, O_WRONLY | O_NONBLOCK);
+    if (fd == -1)
+    {
+        if (errno == ENOENT || errno == ENXIO)
+        {
+            printf("Cannot send '%c', spin service is not listening\n", cmd);
+        }
+        else
+        {
+            perror("Failed to open spin pipe");
+        }
+        return -1;
+    }
+
+    ssize_t written = write(fd, &cmd, 1);
+    if (written != 1)
+    {
+        perror("Failed to write to spin pipe");
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+    printf("Sent '%c' to spin\n", cmd);
+    return 0;
 }
 
 int setinterface(int fd, int speed)
@@ -430,6 +462,17 @@ void runcmd_dbdel(struct Portal *portal, char *cmdkey, char *key, char *value)
     }    
 }
 
+void runcmd_spin(char *cmd)
+{
+    if (strlen(cmd) != 1)
+    {
+        printf("Spin command requires a single character\n");
+        return;
+    }
+
+    sendspincmd(cmd[0]);
+}
+
 void runcmd(struct Portal *portal)
 {
     char **stack = portal->cmdstack;
@@ -518,6 +561,17 @@ void runcmd(struct Portal *portal)
 
         char *value = (count == 3) ? NULL : stack[3];
         runcmd_dbdel(portal, stack[0], stack[2], value);
+    }
+    else if (strcmp(stack[1], "spin") == 0)
+    {
+        // Run spin command
+        if (count < 3)
+        {
+            printf("'spin' command requires three arguments\n");
+            return;
+        }
+
+        runcmd_spin(stack[2]);
     }
     else
     {
@@ -1501,6 +1555,9 @@ int main_db(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
+    // Flush stdout after every line
+	setvbuf(stdout, NULL, _IOLBF, 0);
+
     char *cmd = (argc > 1) ? argv[1] : "service";
 
     if (strcmp(cmd, "service") == 0)
